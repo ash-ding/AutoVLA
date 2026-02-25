@@ -1,0 +1,16 @@
+name: openai-nuplan-mini
+description: CoT preprocessing using OpenAI API (e.g., GPT-4o) on navmini split
+
+# Annotation backend
+annotation_backend: openai
+api_model: gpt-4o
+# api_key: null  # uses OPENAI_API_KEY env var if null
+# api_base_url: null  # uses default OpenAI endpoint; set for Azure/compatible APIs
+max_tokens: 700
+temperature: 0
+image_detail: low  # low/high/auto — controls image token cost
+
+# dataset
+dataset_name: nuplan
+dataset_path: /export/scratch_large/ding/navsim_workspace/dataset/placeholder/mini
+scene_filter: /export/scratch_large/ding/code/AutoVLA/navsim/navsim/planning/script/config/common/train_test_split/scene_filter/navmini.yaml

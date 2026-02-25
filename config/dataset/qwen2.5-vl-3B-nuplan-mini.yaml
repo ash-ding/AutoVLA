@@ -1,0 +1,14 @@
+name: qwen2.5-vl-3B-nuplan-mini
+description: CoT preprocessing for AutoVLA using Qwen2.5-VL-3B-Instruct on navmini split
+
+# model
+pretrained_model_path: /export/scratch_large/ding/code/AutoVLA/model_weights/Qwen2.5-VL-3B-Instruct
+
+# training
+batch_size: 1
+num_workers: 4
+
+# dataset (the split should match the dataset path)
+dataset_name: nuplan
+dataset_path: /export/scratch_large/ding/navsim_workspace/dataset/placeholder/mini
+scene_filter: /export/scratch_large/ding/code/AutoVLA/navsim/navsim/planning/script/config/common/train_test_split/scene_filter/navmini.yaml

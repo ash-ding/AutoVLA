@@ -44,6 +44,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--config", type=str, required=True)
+    parser.add_argument("--max_steps", type=int, default=-1, help="Max training steps (-1 for no limit)")
     args = parser.parse_args()
     seed_everything(args.seed)
 
@@ -113,6 +114,7 @@ if __name__ == "__main__":
     trainer = pl.Trainer(
         num_nodes=1,
         max_epochs=config['training']['epochs'],
+        max_steps=args.max_steps,
         accelerator="gpu",
         devices='auto',
         accumulate_grad_batches=config['training']['accumulate_grad_batches'],
