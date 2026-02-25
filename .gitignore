@@ -19,3 +19,16 @@
 
 # temp
 temp/*
+
+
+# claude
+./claude/*
+
+# logs
+runs/*
+
+# env
+.envrc
+
+# model_weights
+model_weights/*
