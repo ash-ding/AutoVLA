@@ -1,17 +1,10 @@
-name: autovla_codeclean
+name: autovla
 channels:
-  - conda-forge
   - defaults
 
 dependencies:
-  - python=3.9
-  - pip>=23.3
-
-  - jupyterlab
-  - ipykernel
-  - notebook
-
-  - numpy=1.23.4
+  - python=3.10
+  - pip>=26.0
 
   - pip:
       - -r requirements.txt
