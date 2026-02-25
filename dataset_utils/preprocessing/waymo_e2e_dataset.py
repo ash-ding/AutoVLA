@@ -31,7 +31,7 @@ REQUIRED_CAM_LIST = CAM_LIST
 
 
 class WaymoE2ECoTAnnotationDataset(Dataset):
-    def __init__(self, config, processor):
+    def __init__(self, config, processor=None):
         self.config = config
         self.processor = processor
         self.split = self.config.get('dataset_split')
@@ -271,14 +271,17 @@ class WaymoE2ECoTAnnotationDataset(Dataset):
             },
         ]
 
-        # process the images and messages
-        image_inputs, video_inputs = process_vision_info(messages)
-        text = self.processor.apply_chat_template(
-            messages, tokenize=False, add_generation_prompt=True, add_vision_id=True
-        )
+        inputs = {'messages': messages, 'token': scene_token}
 
-        inputs = {'text': text, 'image_inputs': image_inputs, 
-                  'video_inputs': video_inputs, 'token': scene_token}
+        # Qwen-specific processing (only when processor is available, i.e., vLLM backend)
+        if self.processor is not None:
+            image_inputs, video_inputs = process_vision_info(messages)
+            text = self.processor.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=True, add_vision_id=True
+            )
+            inputs['text'] = text
+            inputs['image_inputs'] = image_inputs
+            inputs['video_inputs'] = video_inputs
 
         for side in CAM_LIST:
             path_key = f"{side}_camera_paths"

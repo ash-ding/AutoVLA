@@ -9,7 +9,6 @@ from transformers import AutoProcessor
 from torch.utils.data import DataLoader
 import shutil
 from dataset_utils.preprocessing.nuplan_dataset import NuplanCoTAnnotationDataset, DataCollator as NuplanDataCollator
-from dataset_utils.preprocessing.waymo_e2e_dataset import WaymoE2ECoTAnnotationDataset, DataCollator as WaymoDataCollator
 
 
 CAM_LIST = ['front', 'front_left', 'front_right', 
@@ -111,6 +110,7 @@ if __name__ == "__main__":
         dataset = NuplanCoTAnnotationDataset(config, processor)
         collator = NuplanDataCollator(processor)
     elif dataset_name == "waymo":
+        from dataset_utils.preprocessing.waymo_e2e_dataset import WaymoE2ECoTAnnotationDataset, DataCollator as WaymoDataCollator
         dataset = WaymoE2ECoTAnnotationDataset(config, processor)
         collator = WaymoDataCollator(processor)
     else:

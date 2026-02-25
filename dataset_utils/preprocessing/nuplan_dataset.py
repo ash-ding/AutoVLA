@@ -22,7 +22,7 @@ CAM_LIST = ['front', 'front_left', 'front_right',
             'back', 'back_left', 'back_right', 'left', 'right']
 
 class NuplanCoTAnnotationDataset(Dataset):
-    def __init__(self, config, processor):
+    def __init__(self, config, processor=None):
         self.data_path = config['dataset_path']
         self.data_folders = glob.glob(self.data_path + '/*/*')
         self.processor = processor
@@ -219,14 +219,18 @@ class NuplanCoTAnnotationDataset(Dataset):
             },
         ]
 
-        # process the images and messages
-        image_inputs, video_inputs = process_vision_info(messages)
-        text = self.processor.apply_chat_template(
-            messages, tokenize=False, add_generation_prompt=True, add_vision_id=True
-        )
-
         token = self._scene_loader.tokens[idx]
-        inputs = {'text': text, 'image_inputs': image_inputs, 'video_inputs': video_inputs, 'token': token}
+        inputs = {'messages': messages, 'token': token}
+
+        # Qwen-specific processing (only when processor is available, i.e., vLLM backend)
+        if self.processor is not None:
+            image_inputs, video_inputs = process_vision_info(messages)
+            text = self.processor.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=True, add_vision_id=True
+            )
+            inputs['text'] = text
+            inputs['image_inputs'] = image_inputs
+            inputs['video_inputs'] = video_inputs
 
         for side in CAM_LIST:
             camera_key = f"{side}_camera"
