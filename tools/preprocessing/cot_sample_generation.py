@@ -18,10 +18,10 @@ def load_config(file_path):
 def create_annotation_model(config, backend):
     """Factory function to create the appropriate annotation model backend."""
     if backend == 'vllm':
-        from dataset_utils.preprocessing.cot_annotation_model import CoTAnnotationModel
+        from dataset_utils.preprocessing.vllm_cot_annotation_model import CoTAnnotationModel
         return CoTAnnotationModel(config)
     elif backend == 'openai':
-        from dataset_utils.preprocessing.openai_annotation_model import OpenAIAnnotationModel
+        from dataset_utils.preprocessing.openai_cot_annotation_model import OpenAIAnnotationModel
         return OpenAIAnnotationModel(config)
     else:
         raise ValueError(f"Unknown annotation backend: {backend}. Supported: vllm, openai")
