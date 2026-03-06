@@ -13,6 +13,22 @@ from qwen_vl_utils import process_vision_info
 from models.action_tokenizer import ActionTokenizer
 from transformers.modeling_outputs import CausalLMOutputWithPast
 from models.utils.score import PDM_Reward, TrajectorySampling, Trajectory
+import pdb
+import sys
+
+
+class ForkedPdb(pdb.Pdb):
+    """PDB that works in forked/multiprocess environments (FSDP, DDP).
+    Usage: ForkedPdb().set_trace()
+    """
+    def interaction(self, *args, **kwargs):
+        _stdin = sys.stdin
+        try:
+            sys.stdin = open('/dev/stdin')
+            pdb.Pdb.interaction(self, *args, **kwargs)
+        finally:
+            sys.stdin = _stdin
+
 
 
 class GRPOAutoVLA(pl.LightningModule):
@@ -71,14 +87,58 @@ class GRPOAutoVLA(pl.LightningModule):
             self.register_buffer("window_count",  torch.zeros(1, dtype=torch.long))
 
     def training_step(self, batch):
+        # DEBUG: structure of batch
+        # batch = {
+        #     'input_features': {
+        #         'vehicle_velocity': [vx, vy],           # float list, m/s
+        #         'vehicle_acceleration': [ax, ay],       # float list, m/s²
+        #         'driving_command': str,                  # e.g. 'turn left'
+        #         'images': {
+        #             'front_camera':       [path x4],     # 4 frames @ 2Hz
+        #             'front_left_camera':  [path x4],
+        #             'front_right_camera': [path x4],
+        #             'back_camera':        [path x4],
+        #             'back_left_camera':   [path x4],
+        #             'back_right_camera':  [path x4],
+        #         },
+        #         'dataset_name': str,                     # e.g. 'nuplan'
+        #         'gt_trajectory': [[x,y,heading] x10],    # 10 poses, 5s @ 2Hz
+        #         'history_trajectory': [[x,y,heading] x10],
+        #         'sensor_data_path': str,                 # root dir for images
+        #     },
+        #     'target_trajectory': {
+        #         'gt_pos_raw':  Tensor[10, 2],            # (x, y) bf16
+        #         'gt_head_raw': Tensor[10],               # heading, bf16
+        #         'gt_idx':      Tensor[1, 10],            # codebook token ids
+        #         'gt_pos':      Tensor[1, 10, 2],         # quantized (x, y)
+        #         'gt_heading':  Tensor[1, 10],             # quantized heading
+        #         'sampled_idx': Tensor[1, 10],            # sampled token ids
+        #         'sampled_pos': Tensor[1, 10, 2],
+        #         'sampled_heading': Tensor[1, 10],
+        #     },
+        #     'token': str,                                # scene token id
+        # }
         # Generate a sample from the model.
         self.autovla.train()
         with torch.no_grad():
             sample = self.generate_sample(
                 batch, model=self.autovla, device=next(self.parameters()).device)
-        
+            # sample = {
+            #   'trajectory':    Trajectory(poses=[10,3], sampling),  # decoded (x,y,heading), float32
+            #   'token':         str,                                 # scene token id
+            #   'completion_texts': [str],                            # decoded CoT + action text
+            #   'prompt_length': int,                                 # num tokens in prompt
+            #   'input_ids':     Tensor[1, prompt+completion],        # full token ids
+            #   'completion_ids': Tensor[1, completion_len],          # generated token ids only
+            #   'attention_mask': Tensor[1, prompt+completion],       # 1s for all valid tokens
+            #   'completion_mask': Tensor[1, completion_len],         # 1s up to (incl.) EOS
+            #   'pixel_values_videos': Tensor[N, D],                 # preprocessed video pixels
+            #   'video_grid_thw': Tensor[3, 3],                      # [num_frames, H_tiles, W_tiles] per video
+            # }
+
             # Compute the reward for the generated sample.
-            reward = self.reward_function(sample)
+            reward = self.reward_function(sample) # reward is a scalar tensor
+            ForkedPdb().set_trace()
             reward_scale = self.cfg['rl']['reward'].get("scale", 1.0)
             reward = reward * reward_scale
             
@@ -88,7 +148,7 @@ class GRPOAutoVLA(pl.LightningModule):
             advantage = (reward - groupped_rewards.mean()) / (groupped_rewards.std() + 1e-4)
 
         # Compute the per-token log probabilities.
-        per_token_logps = self.get_per_token_logps(
+        per_token_logps = self.get_per_token_logps( # (B, L-1)
             self.autovla.vlm, 
             sample['input_ids'], 
             sample['attention_mask'], 
@@ -112,7 +172,7 @@ class GRPOAutoVLA(pl.LightningModule):
 
         # Compute the policy loss
         per_policy_loss = \
-            torch.exp(per_token_logps - per_token_logps.detach()) * advantage.unsqueeze(-1)
+            torch.exp(per_token_logps - per_token_logps.detach()) * advantage.unsqueeze(-1) # extend advantage to (B, 1) for broadcasting with per-token logps
 
         # Compute the kl loss
         kl_beta = self.cfg['rl'].get("kl_beta", 0.0)

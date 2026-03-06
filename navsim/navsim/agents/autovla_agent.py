@@ -292,6 +292,12 @@ class TrajectoryTargetBuilder(AbstractTargetBuilder):
         :param trajectory_sampling: trajectory sampling specification.
         :param codebook_cache_path: optional codebook cache path as string, defaults to None
         """
+        # num_k: number of top-K nearest codebook tokens to consider when matching.
+        #   num_k=1 (used here): greedy match — always pick the closest token, no randomness.
+        #   num_k>1 (training augmentation): sample from top-K nearest tokens weighted by
+        #     distance (closer = higher prob), controlled by temp. Makes the model robust to
+        #     autoregressive error accumulation during inference.
+        # temp: sampling temperature. Higher = more random among top-K candidates.
         agent_token_sampling = DictConfig({"num_k": 1, "temp": 1.0})
 
         self.token_processor = TokenProcessor(
@@ -306,7 +312,23 @@ class TrajectoryTargetBuilder(AbstractTargetBuilder):
 
     def compute_targets(self, scene_data) -> Dict:
         """Inherited, see superclass."""
-        gt_trajectory = np.array(scene_data['gt_trajectory'])
+        gt_trajectory = np.array(scene_data['gt_trajectory']) # shape: [10, 3], 10 lines, for each line: [x, y, heading]
+        # DEBUG: Each pose is [x, y, heading] as ABSOLUTE offsets from the ego vehicle's
+        #   current position (origin=0,0,0), NOT per-step deltas between consecutive steps.
+        #   e.g. step1 x=3.31, step2 x=6.79 means both are distances from origin,
+        #   not that step2 moved 6.79m from step1.
+        #   Defined in the ego vehicle's local coordinate frame:
+        #   - x: longitudinal displacement (meters), positive = forward (vehicle heading direction).
+        #         e.g. x=39.52 means the vehicle traveled ~39.5m forward in 5 seconds.
+        #   - y: lateral displacement (meters), positive = left side of the vehicle.
+        #         e.g. y=6.12 means the vehicle shifted ~6.1m to the left in 5 seconds.
+        #   - heading: yaw angle change (radians) relative to the current heading.
+        #         e.g. heading=0.16 rad ≈ 9.2°, meaning the vehicle turned ~9° to the left.
+        #
+        # Example (driving_command='turn left', debug idx=0):
+        #   step 1  (0.5s): x=3.31,  y=0.19, heading=0.12  → slight left turn begins
+        #   step 5  (2.5s): x=18.28, y=2.55, heading=0.17  → continuing left turn
+        #   step 10 (5.0s): x=39.52, y=6.12, heading=0.16  → turn complete, ~6m lateral offset
         future_trajectory = Trajectory(
             gt_trajectory, 
             TrajectorySampling(
@@ -314,9 +336,20 @@ class TrajectoryTargetBuilder(AbstractTargetBuilder):
                 interval_length=self._trajectory_sampling.interval_length,
                 )
             )
-        traj = torch.tensor(future_trajectory.poses, dtype=torch.float32)
+        traj = torch.tensor(future_trajectory.poses, dtype=torch.float32) # tensor shape: [10, 3]
         tokenized_agent = self.token_processor(traj)
-    
+
+        # DEBUG: Example of tokenized_agent:
+        # {
+        #   'gt_pos_raw':  Tensor [10, 2],       # raw GT positions (x, y) per timestep
+        #   'gt_head_raw': Tensor [10],           # raw GT headings per timestep
+        #   'gt_idx':      Tensor [1, 10],        # matched codebook token indices, e.g. [1831, 1984, 681, ...]
+        #   'gt_pos':      Tensor [1, 10, 2],     # token-quantized positions (slightly differ from gt_pos_raw)
+        #   'gt_heading':  Tensor [1, 10],        # token-quantized headings
+        #   'sampled_idx': Tensor [1, 10],        # same as gt_idx when num_k=1 (no sampling at eval)
+        #   'sampled_pos': Tensor [1, 10, 2],     # same as gt_pos when num_k=1
+        #   'sampled_heading': Tensor [1, 10],    # same as gt_heading when num_k=1
+        # }
         return tokenized_agent
 
 

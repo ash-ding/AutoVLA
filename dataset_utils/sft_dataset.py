@@ -85,7 +85,38 @@ class SFTDataset(Dataset):
             input_features.update(builder.compute_features(scene_data))
         for builder in self._agent.get_target_builders():
             target_trajectory.update(builder.compute_targets(scene_data))
-        
+
+        # DEBUG: Example of input_features after feature/target builders (nuplan mini, idx=0):
+        # {
+        #   'vehicle_velocity': [6.642823219299316, -0.1834499090909958],
+        #   'vehicle_acceleration': [0.8139415979385376, 2.3587381839752197],
+        #   'driving_command': 'turn left',
+        #   'images': {
+        #       'front_camera':       ['...CAM_F0/3f330c2e7a9c5154.jpg', ...],  # 4 frames
+        #       'front_left_camera':  ['...CAM_L1/cc28209118625c71.jpg', ...],  # 4 frames
+        #       'front_right_camera': ['...CAM_R1/4c518989c79d5680.jpg', ...],  # 4 frames
+        #       'back_camera':        ['...CAM_B0/c1bc1618864c59d5.jpg', ...],  # 4 frames
+        #       'back_left_camera':   ['...CAM_L2/d50a530e682d59c6.jpg', ...],  # 4 frames
+        #       'back_right_camera':  ['...CAM_R2/30a011a4237e5594.jpg', ...],  # 4 frames
+        #   },
+        #   'dataset_name': 'nuplan',
+        #   'gt_trajectory': [[3.31, 0.19, 0.12], ..., [39.52, 6.12, 0.16]],  # 10 poses (x, y, heading)
+        #   'history_trajectory': same as gt_trajectory (note: duplicated in feature builder),
+        #   'sensor_data_path': '/export/scratch_large/ding/navsim_workspace/dataset/sensor_blobs/mini',
+        # }
+        #
+        # DEBUG: Example of target_trajectory after target builders (nuplan mini, idx=0):
+        # {
+        #   'gt_pos_raw':  Tensor [10, 2],       # raw GT positions (x, y) per timestep
+        #   'gt_head_raw': Tensor [10],           # raw GT headings per timestep
+        #   'gt_idx':      Tensor [1, 10],        # matched codebook token indices, e.g. [1831, 1984, 681, ...]
+        #   'gt_pos':      Tensor [1, 10, 2],     # token-quantized positions (slightly differ from gt_pos_raw)
+        #   'gt_heading':  Tensor [1, 10],        # token-quantized headings
+        #   'sampled_idx': Tensor [1, 10],        # same as gt_idx when num_k=1 (no sampling at eval)
+        #   'sampled_pos': Tensor [1, 10, 2],     # same as gt_pos when num_k=1
+        #   'sampled_heading': Tensor [1, 10],    # same as gt_heading when num_k=1
+        # }
+
         # Override sensor_data_path with the correct one for this scene
         input_features['sensor_data_path'] = sensor_data_path
         
@@ -328,10 +359,30 @@ class SFTDataset(Dataset):
 
         # process the images and messages
         image_inputs, video_inputs = process_vision_info(messages)
+        # DEBUG: image_inputs=None,
+        # video_inputs=[
+        #   [PIL.Image 420x224, PIL.Image 420x224, PIL.Image 420x224, PIL.Image 420x224],  # front view, 4 frames @ 2Hz
+        #   [PIL.Image 420x224, PIL.Image 420x224, PIL.Image 420x224, PIL.Image 420x224],  # front-left view, 4 frames @ 2Hz
+        #   [PIL.Image 420x224, PIL.Image 420x224, PIL.Image 420x224, PIL.Image 420x224],  # front-right view, 4 frames @ 2Hz
+        # ]
         text = self.processor.apply_chat_template(
             messages, tokenize=False, add_generation_prompt=True, add_vision_id=True
         )
-    
+        # DEBUG: Example of text
+        # "<|im_start|>system\n
+        # You are an Advanced Driver Assistance and Full Self-Driving System. You will be provided with video observations from the ego vehicle's surrounding cameras, along with the vehicle's current dynamic states. Your task is to predict the most appropriate driving action for the next five seconds.<|im_end|>\n
+        # <|im_start|>user\n
+        # The autonomous vehicle is equipped with three cameras mounted at the front, left, and right, enabling a comprehensive perception of the surrounding environment.
+        # The first video presents the front view of the vehicle, comprising four sequential frames sampled at 2 Hz.Video 1: <|vision_start|><|video_pad|><|vision_end|>
+        # The second video presents the front-left view of the vehicle, comprising four sequential frames sampled at 2 Hz.Video 2: <|vision_start|><|video_pad|><|vision_end|>
+        # The third video presents the front-right view of the vehicle, comprising four sequential frames sampled at 2 Hz.Video 3: <|vision_start|><|video_pad|><|vision_end|>
+        # The current velocity of the vehicle is 6.645 m/s, and the current acceleration is 2.495 m/s². The driving instruction is: turn left. Based on this information, plan the action trajectory for the autonomous vehicle over the next five seconds.<|im_end|>\n
+        # <|im_start|>assistant\n
+        # <answer>\n
+        # The final output action is: <action_1831><action_1984><action_681><action_900><action_155><action_1205><action_468><action_39><action_120><action_5>\n
+        # </answer><|im_end|>\n
+        # <|im_start|>assistant\n"
+
         inputs = {'text': text, 'image_inputs': image_inputs, 'video_inputs': video_inputs}
 
         # trajectory information
@@ -398,3 +449,58 @@ class DataCollator:
         batch['has_cot'] = torch.tensor(has_cot)
 
         return batch
+
+# ---------------------------------------------------------------------------
+# Standalone test entry point for debugging SFTDataset with pdb
+# Usage: python dataset_utils/sft_dataset.py [--config CONFIG] [--idx IDX]
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    import argparse
+    import yaml
+
+    parser = argparse.ArgumentParser(description="Debug SFTDataset.__getitem__")
+    parser.add_argument("--config", type=str, default="config/training/qwen2.5-vl-3B-mini-sft.yaml",
+                        help="Path to training config YAML")
+    parser.add_argument("--idx", type=int, default=0, help="Sample index to fetch")
+    args = parser.parse_args()
+
+    with open(args.config, "r") as f:
+        config = yaml.safe_load(f)
+
+    print(f"Loading processor from: {config['model']['pretrained_model_path']}")
+    processor = AutoProcessor.from_pretrained(config["model"]["pretrained_model_path"], use_fast=True)
+
+    print(f"Creating SFTDataset (use_cot={config['model'].get('use_cot', True)}) ...")
+    dataset = SFTDataset(
+        data_config=config["data"]["train"],
+        model_config=config["model"],
+        processor=processor,
+        using_cot=config["model"].get("use_cot", True),
+    )
+    print(f"Dataset size: {len(dataset)}")
+
+    # --- Set breakpoint here, then step into dataset[idx] with pdb ---
+    print(f"\nAbout to call dataset[{args.idx}]. Dropping into pdb...")
+    sample = dataset[args.idx]
+
+    # Print summary of the returned sample
+    print("\n=== Sample keys ===")
+    for k, v in sample.items():
+        if isinstance(v, torch.Tensor):
+            print(f"  {k}: Tensor shape={v.shape}, dtype={v.dtype}")
+        elif isinstance(v, str):
+            print(f"  {k}: str len={len(v)}")
+        elif isinstance(v, list):
+            print(f"  {k}: list len={len(v)}")
+        else:
+            print(f"  {k}: {type(v).__name__} = {v}")
+
+    print("\n=== Text (first 500 chars) ===")
+    print(sample["text"][:500])
+
+    print("\n=== GT trajectory ===")
+    print(sample["gt_trajectory"])
+
+    print("\n=== GT action token indices ===")
+    print(sample["gt_action"])
+
