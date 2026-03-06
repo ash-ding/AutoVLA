@@ -22,7 +22,10 @@ temp/*
 
 
 # claude
-./claude/*
+.claude/
+
+# proposals/papers
+*.pdf
 
 # logs
 runs/*
