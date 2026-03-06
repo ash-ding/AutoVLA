@@ -4,7 +4,7 @@ description: AutoVLA based on Qwen 2.5 VL 3B model fine-tuned on nuPlan mini spl
 
 # model
 model:
-  use_cot: false
+  use_cot: true
   pretrained_model_path: /export/scratch_large/ding/code/AutoVLA/model_weights/Qwen2.5-VL-3B-Instruct
   train_vision_backbone: false
   train_lm_backbone: true
@@ -25,24 +25,24 @@ model:
 training:
   batch_size: 1
   learning_rate: 2.0e-5
-  epochs: 2
-  num_workers: 4
+  epochs: 1
+  num_workers: 2
   weight_decay: 0.01
-  lr_warmup_step: 10
+  lr_warmup_step: 1
   lr_step_frequency: 50
   lr_step_gamma: 0.98
-  train_sample_size: 50  # Use only 50 samples for quick workflow testing
-  accumulate_grad_batches: 4
+  train_sample_size: 4
+  accumulate_grad_batches: 1
 
 data:
   train:
       json_dataset_path:
-        - /export/scratch_large/ding/navsim_workspace/preprocessed/mini_nocot
+        - /export/scratch_large/ding/navsim_workspace/preprocessed/mini_cot_gpt-4o
       sensor_data_path:
         - /export/scratch_large/ding/navsim_workspace/dataset/sensor_blobs/mini
 
   val:
-      json_dataset_path: /export/scratch_large/ding/navsim_workspace/preprocessed/mini_nocot
+      json_dataset_path: /export/scratch_large/ding/navsim_workspace/preprocessed/mini_cot_gpt-4o
       sensor_data_path: /export/scratch_large/ding/navsim_workspace/dataset/sensor_blobs/mini
 
 
