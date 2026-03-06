@@ -150,6 +150,7 @@ if __name__ == "__main__":
     trainer = Trainer(
         num_nodes=1,
         max_epochs=config['training']['epochs'],
+        max_steps=config['training'].get('max_steps', -1),
         accelerator="gpu",
         devices=config['training']['devices'], 
         num_sanity_val_steps=0,

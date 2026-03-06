@@ -71,7 +71,7 @@ if __name__ == "__main__":
     val_dataset = SFTDataset(config['data']['val'], config['model'], processor, using_cot=using_cot)
 
     model = SFTAutoVLA(config)
-    model.autovla.vlm.model.gradient_checkpointing_enable() # enable gradient checkpointing to save memory
+    # model.autovla.vlm.model.gradient_checkpointing_enable() # enable gradient checkpointing to save memory
 
     # checkpoint_path = Path(".ckpt")
     # state_dict = torch.load(checkpoint_path)['state_dict']
