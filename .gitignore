@@ -35,3 +35,14 @@ runs/*
 
 # model_weights
 model_weights/*
+
+# docs (keep local only)
+docs/
+
+# experiment outputs
+test_symbolic_cot*/
+symbolic_cot_free_rules_ablation/
+symbolic_cot_nl_ref_ablation/
+
+# leann index
+.leann/
