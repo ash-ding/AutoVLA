@@ -241,7 +241,8 @@ class NuplanCoTAnnotationDataset(Dataset):
             "acceleration": [float(acceleration[0]), float(acceleration[1])],
             "instruction": instruction,
             "gt_trajectory": gt_trajectory,
-            "his_trajectory": his_raw_trajectory
+            "his_trajectory": his_raw_trajectory,
+            "fut_ego_action": fut_ego_action,
         })
 
         return inputs
