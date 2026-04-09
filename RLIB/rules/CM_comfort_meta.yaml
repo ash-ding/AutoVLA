@@ -1,0 +1,59 @@
+# CM — Comfort / Simplicity / Tie-Breaking Meta-Rules
+# Priority range: 10–15
+
+rules:
+  - id: CM-001
+    priority: 15
+    category: comfort_meta
+    description: >
+      Resume driving from stop when no restrictions apply.
+    preconditions:
+      - EgoStopped
+      - NOT RedLight
+      - NOT StopSignPresent
+      - NOT PathBlocked
+      - NOT PedestrianCrossing
+      - NOT EmergencyVehicleNearby
+    action:
+      lateral: KeepLane
+      longitudinal: Acceleration
+    explanation: >
+      Stopped with no reason to remain — accelerate to resume normal driving.
+    conflict_policy: highest_priority_wins
+
+  - id: CM-002
+    priority: 12
+    category: comfort_meta
+    description: >
+      Default cruise when no hazards or restrictions present.
+    preconditions:
+      - NOT RedLight
+      - NOT YellowLight
+      - NOT StopSignPresent
+      - NOT PathBlocked
+      - NOT PedestrianCrossing
+      - NOT EmergencyVehicleNearby
+      - NOT LeadVehicleStopped
+    action:
+      lateral: KeepLane
+      longitudinal: ConstantSpeed
+    explanation: >
+      No active restrictions — maintain comfortable cruising speed.
+    conflict_policy: highest_priority_wins
+
+  - id: CM-003
+    priority: 10
+    category: comfort_meta
+    description: >
+      Follow lead vehicle at constant speed when it is moving normally.
+    preconditions:
+      - NOT EgoStopped
+      - LeadVehiclePresent
+      - NOT LeadVehicleBraking
+      - NOT LeadVehicleClose
+    action:
+      lateral: KeepLane
+      longitudinal: ConstantSpeed
+    explanation: >
+      Lead vehicle present at safe distance, not braking — cruise to match flow.
+    conflict_policy: highest_priority_wins

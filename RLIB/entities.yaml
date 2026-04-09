@@ -1,0 +1,50 @@
+# Entity Type Hierarchy — Stage 1: PERCEPTION
+#
+# Each base type has optional subtypes and typed attributes.
+# All spatial/speed values are qualitative (no precise numbers).
+
+Vehicle:
+  subtypes: [Car, Truck, Bus, Motorcycle, EmergencyVehicle, ConstructionVehicle]
+  attributes:
+    position: [Front, FrontLeft, FrontRight, Left, Right, Behind]
+    lane: [EgoLane, LeftLane, RightLane, OncomingLane, Adjacent]
+    distance: [VeryNear, Near, Medium, Far]
+    motion: [Stationary, Moving, Approaching, Receding, Decelerating, Accelerating]
+    signal: [None, LeftBlinker, RightBlinker, Hazard, BrakeLights]
+
+Pedestrian:
+  subtypes: []
+  attributes:
+    position: [Front, FrontLeft, FrontRight, Left, Right, Behind]
+    distance: [VeryNear, Near, Medium, Far]
+    motion: [Standing, Walking, Running, Crossing]
+    location: [Sidewalk, Crosswalk, Road, Shoulder]
+
+Cyclist:
+  subtypes: [Bicycle, Scooter]
+  attributes:
+    position: [Front, FrontLeft, FrontRight, Left, Right, Behind]
+    distance: [VeryNear, Near, Medium, Far]
+    motion: [Stationary, Moving, Approaching, Receding]
+    lane: [EgoLane, BikeLane, Sidewalk, Road]
+
+TrafficLight:
+  subtypes: []
+  attributes:
+    color: [Red, Yellow, Green, Off, Flashing]
+    position: [Front, FrontLeft, FrontRight, Left, Right]
+    applies_to: [EgoLane, LeftTurn, RightTurn, Pedestrian, All]
+
+TrafficSign:
+  subtypes: [SpeedLimit, StopSign, YieldSign, NoTurnOnRed, SchoolZone,
+             ConstructionZone, MergeSign, LaneEndSign, OneWay]
+  attributes:
+    position: [Front, FrontLeft, FrontRight, Left, Right]
+    distance: [Near, Medium, Far]
+
+RoadFeature:
+  subtypes: [Crosswalk, Intersection, MergePoint, RoundAbout, RampEntry,
+             RampExit, ParkingArea, WorkZone]
+  attributes:
+    position: [Ahead, Current, Behind]
+    distance: [VeryNear, Near, Medium, Far]

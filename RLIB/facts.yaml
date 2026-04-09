@@ -1,0 +1,381 @@
+# Fact Vocabulary + Grounding Conditions — Stage 3: FACTS
+#
+# vocabulary: list of all valid fact names
+# groundings: formal conditions defining when each fact is True
+#
+# Grounding condition kinds:
+#   entity    — EXISTS entity matching type + attributes
+#   no_entity — NOT EXISTS entity matching type + attributes
+#   ego       — EgoQuery(attribute) == value
+#   judgment  — requires model reasoning, cannot be verified automatically
+#
+# Multiple conditions per fact = OR (any branch satisfies).
+# Within one condition: attributes = AND, attr_in = value in set.
+
+vocabulary:
+  # Traffic signal
+  - RedLight
+  - YellowLight
+  - GreenLight
+  - NoTrafficLight
+
+  # Road structure
+  - ApproachingIntersection
+  - AtIntersection
+  - ApproachingCrosswalk
+  - InMergeZone
+  - InConstructionZone
+  - InSchoolZone
+
+  # Lead vehicle
+  - LeadVehiclePresent
+  - LeadVehicleClose
+  - LeadVehicleBraking
+  - LeadVehicleStopped
+  - PathBlocked
+
+  # Pedestrians
+  - PedestrianCrossing
+  - PedestrianWaiting
+  - CrosswalkOccupied
+
+  # Ego state
+  - EgoStopped
+  - EgoMovingSlow
+  - CanStopComfortably
+  - InstructionTurnLeft
+  - InstructionTurnRight
+  - InstructionKeepForward
+
+  # Safety
+  - EmergencyVehicleNearby
+  - OncomingTraffic
+  - AdjacentVehicleClose
+  - RearVehicleApproaching
+  - LeftLaneClear
+  - RightLaneClear
+
+  # Traffic signs
+  - StopSignPresent
+  - YieldSignPresent
+  - NoTurnOnRedSign
+  - SpeedLimitLow
+
+groundings:
+
+  # --- Traffic Signal ---
+
+  RedLight:
+    description: "Traffic light controlling ego lane (applies_to EgoLane or All) shows Red"
+    category: traffic_signal
+    conditions:
+      - kind: entity
+        base_type: TrafficLight
+        attributes: {color: Red}
+        attr_in: {applies_to: [EgoLane, All]}
+
+  YellowLight:
+    description: "Traffic light controlling ego lane (applies_to EgoLane or All) shows Yellow"
+    category: traffic_signal
+    conditions:
+      - kind: entity
+        base_type: TrafficLight
+        attributes: {color: Yellow}
+        attr_in: {applies_to: [EgoLane, All]}
+
+  GreenLight:
+    description: "Traffic light controlling ego lane (applies_to EgoLane or All) shows Green"
+    category: traffic_signal
+    conditions:
+      - kind: entity
+        base_type: TrafficLight
+        attributes: {color: Green}
+        attr_in: {applies_to: [EgoLane, All]}
+
+  NoTrafficLight:
+    description: "No traffic light applies to ego lane — treat as uncontrolled"
+    category: traffic_signal
+    conditions:
+      - kind: no_entity
+        base_type: TrafficLight
+        attr_in: {applies_to: [EgoLane, All]}
+
+  # --- Road Structure ---
+
+  ApproachingIntersection:
+    description: "An intersection is ahead at close range (distance Near or VeryNear)"
+    category: road_structure
+    conditions:
+      - kind: entity
+        base_type: RoadFeature
+        subtype: Intersection
+        attributes: {position: Ahead}
+        attr_in: {distance: [Near, VeryNear]}
+
+  AtIntersection:
+    description: "Ego vehicle is currently inside an intersection (position Current or distance VeryNear)"
+    category: road_structure
+    conditions:
+      - kind: entity
+        base_type: RoadFeature
+        subtype: Intersection
+        attributes: {position: Current}
+      - kind: entity
+        base_type: RoadFeature
+        subtype: Intersection
+        attr_in: {distance: [VeryNear]}
+
+  ApproachingCrosswalk:
+    description: "A crosswalk is ahead at close range (distance Near or VeryNear)"
+    category: road_structure
+    conditions:
+      - kind: entity
+        base_type: RoadFeature
+        subtype: Crosswalk
+        attributes: {position: Ahead}
+        attr_in: {distance: [Near, VeryNear]}
+
+  InMergeZone:
+    description: "Ego vehicle is at or entering a merge point (distance VeryNear or position Current)"
+    category: road_structure
+    conditions:
+      - kind: entity
+        base_type: RoadFeature
+        subtype: MergePoint
+        attributes: {position: Current}
+      - kind: entity
+        base_type: RoadFeature
+        subtype: MergePoint
+        attr_in: {distance: [VeryNear]}
+
+  InConstructionZone:
+    description: "Ego vehicle is in a work/construction zone"
+    category: road_structure
+    conditions:
+      - kind: entity
+        base_type: RoadFeature
+        subtype: WorkZone
+        attributes: {position: Current}
+      - kind: entity
+        base_type: RoadFeature
+        subtype: WorkZone
+        attr_in: {distance: [VeryNear]}
+
+  InSchoolZone:
+    description: "A school zone sign is visible"
+    category: road_structure
+    conditions:
+      - kind: entity
+        base_type: TrafficSign
+        subtype: SchoolZone
+
+  # --- Lead Vehicle ---
+
+  LeadVehiclePresent:
+    description: "A vehicle is directly ahead in the ego lane"
+    category: lead_vehicle
+    conditions:
+      - kind: entity
+        base_type: Vehicle
+        attributes: {position: Front, lane: EgoLane}
+
+  LeadVehicleClose:
+    description: "A vehicle ahead in the ego lane is at close distance (VeryNear or Near)"
+    category: lead_vehicle
+    conditions:
+      - kind: entity
+        base_type: Vehicle
+        attributes: {position: Front, lane: EgoLane}
+        attr_in: {distance: [VeryNear, Near]}
+
+  LeadVehicleBraking:
+    description: "Lead vehicle is braking — brake lights on OR motion is Decelerating"
+    category: lead_vehicle
+    conditions:
+      - kind: entity
+        base_type: Vehicle
+        attributes: {position: Front, lane: EgoLane, signal: BrakeLights}
+      - kind: entity
+        base_type: Vehicle
+        attributes: {position: Front, lane: EgoLane, motion: Decelerating}
+
+  LeadVehicleStopped:
+    description: "Lead vehicle in ego lane is stationary"
+    category: lead_vehicle
+    conditions:
+      - kind: entity
+        base_type: Vehicle
+        attributes: {position: Front, lane: EgoLane, motion: Stationary}
+
+  PathBlocked:
+    description: "A stationary vehicle blocks the ego lane at close range"
+    category: lead_vehicle
+    conditions:
+      - kind: entity
+        base_type: Vehicle
+        attributes: {position: Front, lane: EgoLane, motion: Stationary}
+        attr_in: {distance: [VeryNear, Near]}
+
+  # --- Pedestrians ---
+
+  PedestrianCrossing:
+    description: "A pedestrian is actively crossing the road"
+    category: pedestrians
+    conditions:
+      - kind: entity
+        base_type: Pedestrian
+        attributes: {motion: Crossing}
+
+  PedestrianWaiting:
+    description: "A pedestrian is standing near the road (crosswalk, road, or shoulder), appearing to wait"
+    category: pedestrians
+    conditions:
+      - kind: entity
+        base_type: Pedestrian
+        attributes: {motion: Standing}
+        attr_in: {location: [Crosswalk, Road, Shoulder]}
+
+  CrosswalkOccupied:
+    description: "A pedestrian is on the crosswalk"
+    category: pedestrians
+    conditions:
+      - kind: entity
+        base_type: Pedestrian
+        attributes: {location: Crosswalk}
+
+  # --- Ego State ---
+
+  EgoStopped:
+    description: "Ego vehicle is currently stopped (speed = Stopped)"
+    category: ego_state
+    conditions:
+      - kind: ego
+        attribute: speed
+        value: Stopped
+
+  EgoMovingSlow:
+    description: "Ego vehicle is moving at low speed (speed = Slow)"
+    category: ego_state
+    conditions:
+      - kind: ego
+        attribute: speed
+        value: Slow
+
+  CanStopComfortably:
+    description: "Ego can brake to a full stop before the stop point without harsh deceleration"
+    category: ego_state
+    conditions:
+      - kind: judgment
+        description: >
+          Infer from ego speed and distance to the nearest stop-requiring entity
+          (traffic light, stop sign, lead vehicle, crosswalk). Slow speed or far
+          distance generally implies True; fast speed with very near distance
+          implies False.
+
+  InstructionTurnLeft:
+    description: "Navigation instruction for this step is to turn left"
+    category: ego_state
+    conditions:
+      - kind: ego
+        attribute: instruction
+        value: TurnLeft
+
+  InstructionTurnRight:
+    description: "Navigation instruction for this step is to turn right"
+    category: ego_state
+    conditions:
+      - kind: ego
+        attribute: instruction
+        value: TurnRight
+
+  InstructionKeepForward:
+    description: "Navigation instruction for this step is to keep going forward"
+    category: ego_state
+    conditions:
+      - kind: ego
+        attribute: instruction
+        value: KeepForward
+
+  # --- Safety ---
+
+  EmergencyVehicleNearby:
+    description: "An emergency vehicle is present anywhere in the scene"
+    category: safety
+    conditions:
+      - kind: entity
+        base_type: Vehicle
+        subtype: EmergencyVehicle
+
+  OncomingTraffic:
+    description: "A vehicle is in the oncoming lane"
+    category: safety
+    conditions:
+      - kind: entity
+        base_type: Vehicle
+        attributes: {lane: OncomingLane}
+
+  AdjacentVehicleClose:
+    description: "A vehicle in an adjacent lane (left, right, or adjacent) is at close distance"
+    category: safety
+    conditions:
+      - kind: entity
+        base_type: Vehicle
+        attr_in: {lane: [LeftLane, RightLane, Adjacent], distance: [VeryNear, Near]}
+
+  RearVehicleApproaching:
+    description: "A vehicle behind is approaching (closing distance)"
+    category: safety
+    conditions:
+      - kind: entity
+        base_type: Vehicle
+        attributes: {position: Behind, motion: Approaching}
+
+  LeftLaneClear:
+    description: "No vehicle detected in LeftLane at close range (VeryNear or Near)"
+    category: safety
+    conditions:
+      - kind: no_entity
+        base_type: Vehicle
+        attr_in: {lane: [LeftLane], distance: [VeryNear, Near]}
+
+  RightLaneClear:
+    description: "No vehicle detected in RightLane at close range (VeryNear or Near)"
+    category: safety
+    conditions:
+      - kind: no_entity
+        base_type: Vehicle
+        attr_in: {lane: [RightLane], distance: [VeryNear, Near]}
+
+  # --- Traffic Signs ---
+
+  StopSignPresent:
+    description: "A stop sign is visible ahead"
+    category: traffic_signs
+    conditions:
+      - kind: entity
+        base_type: TrafficSign
+        subtype: StopSign
+
+  YieldSignPresent:
+    description: "A yield sign is visible ahead"
+    category: traffic_signs
+    conditions:
+      - kind: entity
+        base_type: TrafficSign
+        subtype: YieldSign
+
+  NoTurnOnRedSign:
+    description: "A no-turn-on-red sign is visible"
+    category: traffic_signs
+    conditions:
+      - kind: entity
+        base_type: TrafficSign
+        subtype: NoTurnOnRed
+
+  SpeedLimitLow:
+    description: "A speed limit sign is visible (implying a low-speed zone)"
+    category: traffic_signs
+    conditions:
+      - kind: entity
+        base_type: TrafficSign
+        subtype: SpeedLimit

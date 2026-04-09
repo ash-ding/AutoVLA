@@ -1,0 +1,31 @@
+# Operations — Stage 2: OPERATIONS
+#
+# Six operation types for querying the perceived scene.
+
+Query:
+  description: "Query a single entity's attribute"
+  syntax: "Query(<entity_id>, <attribute>) = <value>"
+
+Filter:
+  description: "Filter entities by type and condition"
+  syntax: "Filter(<EntityType>, <attribute> = <value>) = {<entity_ids>}"
+
+Count:
+  description: "Count entities (may wrap Filter)"
+  syntax: "Count(Filter(<EntityType>, <condition>)) = <int>"
+
+Exists:
+  description: "Check if any entity matches (may wrap Filter)"
+  syntax: "Exists(Filter(<EntityType>, <condition>)) = <True|False>"
+
+Nearest:
+  description: "Get attribute of nearest entity of a type"
+  syntax: "Nearest(<EntityType>, <attribute>) = <value>"
+
+EgoQuery:
+  description: "Query ego vehicle state"
+  syntax: "EgoQuery(<attribute>) = <value>"
+  attributes:
+    speed: [Stopped, Slow, Medium, Fast]
+    acceleration: [Braking, Coasting, Accelerating]
+    instruction: [KeepForward, TurnLeft, TurnRight]
