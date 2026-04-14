@@ -6,7 +6,11 @@ script_folder = os.path.dirname(os.path.realpath(__file__))
 os.chdir(script_folder)
 
 with open("requirements.txt") as f:
-    requirements = f.read().splitlines()
+    requirements = [
+        line.strip()
+        for line in f
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
 
 setup(
     name="AutoVLA",

@@ -2,7 +2,8 @@ name: qwen2.5-vl-72B-nuplan
 description: Preprocessing dataset for AutoVLA with Qwen 2.5 VL 72B model on NuPlan dataset for CoT generation
 
 # model
-pretrained_model_path: /data/AutoVLA/Qwen2.5-VL-72B-Instruct-AWQ
+pretrained_model_path: /export/scratch_large/pouya/autovla_models/Qwen2.5-VL-72B-Instruct-AWQ
+tensor_parallel_size: 4
 
 # training
 batch_size: 1
@@ -10,5 +11,5 @@ num_workers: 32
 
 # dataset (the split should match the dataset path)
 dataset_name: nuplan
-dataset_path: /data/AutoVLA/nuplan/placeholder/mini
-scene_filter: /data/AutoVLA/navsim/navsim/planning/script/config/common/train_test_split/scene_filter/warmup_test_e2e.yaml
+dataset_path: /export/scratch_large/pouya/autovla_dataset/nuplan/trainval_placeholder/trainval
+scene_filter: /export/scratch_large/pouya/AutoVLA/navsim/navsim/planning/script/config/common/train_test_split/scene_filter/all_scenes.yaml

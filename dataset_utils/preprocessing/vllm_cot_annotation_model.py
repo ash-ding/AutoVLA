@@ -33,6 +33,8 @@ class CoTAnnotationModel():
             "prompt": inputs['text'],
             "multi_modal_data": mm_data,
         }
+        if inputs.get("mm_processor_kwargs"):
+            llm_inputs["mm_processor_kwargs"] = inputs["mm_processor_kwargs"]
 
         outputs = self.llm.generate(llm_inputs, sampling_params=self.sampling_params)
         output_text = [output.outputs[0].text for output in outputs]

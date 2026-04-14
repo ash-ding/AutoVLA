@@ -275,13 +275,31 @@ class WaymoE2ECoTAnnotationDataset(Dataset):
 
         # Qwen-specific processing (only when processor is available, i.e., vLLM backend)
         if self.processor is not None:
-            image_inputs, video_inputs = process_vision_info(messages)
+            process_vision_kwargs = {
+                "return_video_kwargs": True,
+            }
+            patch_size = getattr(getattr(self.processor, "image_processor", None), "patch_size", None)
+            if patch_size is not None:
+                process_vision_kwargs["image_patch_size"] = patch_size
+
+            try:
+                image_inputs, video_inputs, video_kwargs = process_vision_info(
+                    messages,
+                    return_video_metadata=True,
+                    **process_vision_kwargs,
+                )
+            except TypeError:
+                image_inputs, video_inputs, video_kwargs = process_vision_info(
+                    messages,
+                    **process_vision_kwargs,
+                )
             text = self.processor.apply_chat_template(
                 messages, tokenize=False, add_generation_prompt=True, add_vision_id=True
             )
             inputs['text'] = text
             inputs['image_inputs'] = image_inputs
             inputs['video_inputs'] = video_inputs
+            inputs['mm_processor_kwargs'] = video_kwargs or {}
 
         for side in CAM_LIST:
             path_key = f"{side}_camera_paths"
@@ -526,6 +544,7 @@ class DataCollator:
         batch["text"] = [feature["text"] for feature in features]
         batch["image_inputs"] = [feature["image_inputs"] for feature in features]
         batch["video_inputs"] = [feature["video_inputs"] for feature in features]
+        batch["mm_processor_kwargs"] = [feature.get("mm_processor_kwargs", {}) for feature in features]
         batch["token"] = [feature["token"] for feature in features]
 
         batch["velocity"] = [feature["velocity"] for feature in features]
