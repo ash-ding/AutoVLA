@@ -95,7 +95,15 @@ if __name__ == "__main__":
     else:
         selected_indices = indices
 
-    for idx in tqdm(selected_indices, desc=f"Processing scenes (Sample {args.sample_num} of {args.num_parts} parts)"):
+    progress = tqdm(
+        selected_indices,
+        desc=f"CoT generation ({args.sample_num}/{args.num_parts})",
+        unit="scene",
+        dynamic_ncols=True,
+    )
+
+    saved_count = 0
+    for idx in progress:
         sample = val_dataset[idx]
 
         cot_outputs = model.vlm_inference(sample)
@@ -128,5 +136,7 @@ if __name__ == "__main__":
         output_path = os.path.join(args.output_dir, f"{token}.json")
         with open(output_path, "w", encoding="utf-8") as f:
             json.dump(result, f, indent=2, ensure_ascii=False)
+        saved_count += 1
+        progress.set_postfix_str(f"saved={saved_count} token={token}")
 
     print(f"All preprocessing data with CoT results have been saved in directory: {args.output_dir}")

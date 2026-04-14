@@ -106,7 +106,24 @@ class SymbolicPromptWrapper:
         # vLLM backend: re-encode after prompt replacement
         if self.processor is not None:
             from qwen_vl_utils import process_vision_info
-            image_inputs, video_inputs = process_vision_info(sample["messages"])
+            process_vision_kwargs = {
+                "return_video_kwargs": True,
+            }
+            patch_size = getattr(getattr(self.processor, "image_processor", None), "patch_size", None)
+            if patch_size is not None:
+                process_vision_kwargs["image_patch_size"] = patch_size
+
+            try:
+                image_inputs, video_inputs, video_kwargs = process_vision_info(
+                    sample["messages"],
+                    return_video_metadata=True,
+                    **process_vision_kwargs,
+                )
+            except TypeError:
+                image_inputs, video_inputs, video_kwargs = process_vision_info(
+                    sample["messages"],
+                    **process_vision_kwargs,
+                )
             text = self.processor.apply_chat_template(
                 sample["messages"], tokenize=False,
                 add_generation_prompt=True, add_vision_id=True,
@@ -114,6 +131,7 @@ class SymbolicPromptWrapper:
             sample["text"] = text
             sample["image_inputs"] = image_inputs
             sample["video_inputs"] = video_inputs
+            sample["mm_processor_kwargs"] = video_kwargs or {}
 
         return sample
 
@@ -213,7 +231,15 @@ if __name__ == "__main__":
         "grounding_scores": [],
     }
 
-    for idx in tqdm(selected_indices, desc=f"Symbolic CoT (Part {args.sample_num}/{args.num_parts})"):
+    progress = tqdm(
+        selected_indices,
+        desc=f"Symbolic CoT ({args.sample_num}/{args.num_parts})",
+        unit="scene",
+        dynamic_ncols=True,
+    )
+
+    saved_count = 0
+    for idx in progress:
         sample = val_dataset[idx]
         cot_outputs = model.vlm_inference(sample)
         cot_text = cot_outputs[0] if cot_outputs and len(cot_outputs) > 0 else ""
@@ -293,6 +319,10 @@ if __name__ == "__main__":
         output_path = os.path.join(args.output_dir, f"{token}.json")
         with open(output_path, "w", encoding="utf-8") as f:
             json.dump(result, f, indent=2, ensure_ascii=False)
+        saved_count += 1
+        progress.set_postfix_str(
+            f"saved={saved_count} valid={stats['valid']} parse_ok={stats['parse_success']} token={token}"
+        )
 
     # Print summary
     print("\n" + "=" * 60)

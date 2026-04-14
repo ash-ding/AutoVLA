@@ -36,7 +36,11 @@ class CoTAnnotationModel():
         if inputs.get("mm_processor_kwargs"):
             llm_inputs["mm_processor_kwargs"] = inputs["mm_processor_kwargs"]
 
-        outputs = self.llm.generate(llm_inputs, sampling_params=self.sampling_params)
+        outputs = self.llm.generate(
+            llm_inputs,
+            sampling_params=self.sampling_params,
+            use_tqdm=False,
+        )
         output_text = [output.outputs[0].text for output in outputs]
 
         return output_text
