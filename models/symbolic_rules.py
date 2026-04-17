@@ -505,11 +505,17 @@ class SymbolicValidator:
         self,
         schema: SymbolicSchema | str | Path,
         grounding_strictness: str = "warn",
+        strict_action_match: bool = False,
     ):
         if isinstance(schema, (str, Path)):
             schema = SymbolicSchema(schema)
         self.schema = schema
         self.grounding_strictness = grounding_strictness  # "none" | "warn" | "strict"
+        # When True, ACTION must match a RULE's longitudinal action exactly
+        # (no Deceleration/QuickDeceleration/DecelerationToZero equivalence).
+        # Use this in free-rules mode where the model writes its own rule and
+        # is expected to keep RULE.action and ACTION.action character-identical.
+        self.strict_action_match = strict_action_match
 
     def validate(self, output: SymbolicOutput) -> tuple[bool, list[str], list[str]]:
         """Validate a SymbolicOutput.
@@ -614,10 +620,16 @@ class SymbolicValidator:
     _ACCEL_CLASS = frozenset({"Acceleration", "QuickAcceleration"})
 
     @classmethod
-    def _longitudinal_match(cls, rule_lon: str, selected_lon: str) -> bool:
-        """Return True if rule and selected longitudinal actions are equivalent."""
+    def _longitudinal_match(cls, rule_lon: str, selected_lon: str, *, strict: bool = False) -> bool:
+        """Return True if rule and selected longitudinal actions are equivalent.
+
+        With strict=True, only character-identical match is accepted (no
+        Deceleration / QuickDeceleration / DecelerationToZero equivalence).
+        """
         if rule_lon == selected_lon:
             return True
+        if strict:
+            return False
         if rule_lon in cls._DECEL_CLASS and selected_lon in cls._DECEL_CLASS:
             return True
         if rule_lon in cls._ACCEL_CLASS and selected_lon in cls._ACCEL_CLASS:
@@ -633,11 +645,15 @@ class SymbolicValidator:
                 f"Invalid selected action: {output.selected_lateral}, {output.selected_longitudinal}"
             )
 
-        # Consistent with at least one rule (with longitudinal equivalence classes)
+        # Consistent with at least one rule (with longitudinal equivalence classes
+        # unless strict_action_match was requested).
         if output.rules:
             matched = any(
                 r.lateral_action == output.selected_lateral
-                and self._longitudinal_match(r.longitudinal_action, output.selected_longitudinal)
+                and self._longitudinal_match(
+                    r.longitudinal_action, output.selected_longitudinal,
+                    strict=self.strict_action_match,
+                )
                 for r in output.rules
             )
             if not matched:
@@ -848,11 +864,13 @@ def compute_symbolic_complexity(
         grounding = schema.get_fact_grounding(fact.name)
         if grounding is None:
             continue  # no definition — skip
-        checkable_count += 1
+        # Judgment facts are unverifiable (continuous physical reasoning beyond
+        # the symbolic system); track them separately but exclude from the score
+        # to avoid inflating it with un-checkable "free passes".
         if any(c.kind == "judgment" for c in grounding.conditions):
             judgment_facts.append(fact.name)
-            grounded_count += 1
             continue
+        checkable_count += 1
         satisfied = validator._evaluate_grounding(
             grounding.conditions, entity_index, ego_ops
         )

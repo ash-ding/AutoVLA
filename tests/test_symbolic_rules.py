@@ -497,6 +497,37 @@ class TestValidator:
         is_valid, violations, _ = validator.validate(output)
         assert not any("does not match any rule" in v for v in violations)
 
+    def test_strict_action_match_rejects_equivalence(self, schema):
+        """In strict_action_match mode, Deceleration ≢ QuickDeceleration."""
+        validator = SymbolicValidator(schema, strict_action_match=True)
+        output = SymbolicOutput(
+            entities=[], operations=[],
+            facts=[Fact("LeadVehicleBraking", True)],
+            rules=[Rule(
+                conditions=[("LeadVehicleBraking", True)],
+                lateral_action="KeepLane", longitudinal_action="Deceleration",
+            )],
+            selected_lateral="KeepLane", selected_longitudinal="QuickDeceleration",
+        )
+        is_valid, violations, _ = validator.validate(output)
+        assert not is_valid
+        assert any("does not match any rule" in v for v in violations)
+
+    def test_strict_action_match_accepts_exact(self, schema):
+        """strict_action_match still accepts character-identical rule/action."""
+        validator = SymbolicValidator(schema, strict_action_match=True)
+        output = SymbolicOutput(
+            entities=[], operations=[],
+            facts=[Fact("LeadVehicleBraking", True)],
+            rules=[Rule(
+                conditions=[("LeadVehicleBraking", True)],
+                lateral_action="KeepLane", longitudinal_action="Deceleration",
+            )],
+            selected_lateral="KeepLane", selected_longitudinal="Deceleration",
+        )
+        _, violations, _ = validator.validate(output)
+        assert not any("does not match any rule" in v for v in violations)
+
     def test_action_mismatch(self, validator, parser):
         output = parser.parse(FULL_EXAMPLE)
         output.selected_lateral = "TurnLeft"  # doesn't match rule

@@ -221,7 +221,11 @@ if __name__ == "__main__":
     )
     schema = SymbolicSchema(rlib_dir)
     sym_parser = SymbolicParser(schema)
-    sym_validator = SymbolicValidator(schema, grounding_strictness="warn")
+    sym_validator = SymbolicValidator(
+        schema,
+        grounding_strictness="warn",
+        strict_action_match=args.free_rules,
+    )
 
     # Statistics
     stats = {
@@ -262,7 +266,9 @@ if __name__ == "__main__":
                 if is_valid:
                     stats["valid"] += 1
 
-                # Compute grounding score for True facts
+                # Compute grounding score for True facts.
+                # Judgment facts are excluded — they're unverifiable and would
+                # otherwise inflate the score as automatic "free passes".
                 checkable = 0
                 grounded = 0
                 entity_index = sym_validator._build_entity_index(parsed.entities)
@@ -273,10 +279,10 @@ if __name__ == "__main__":
                     fg = schema.get_fact_grounding(fact.name)
                     if fg is None:
                         continue
-                    checkable += 1
                     if any(c.kind == "judgment" for c in fg.conditions):
-                        grounded += 1
-                    elif sym_validator._evaluate_grounding(fg.conditions, entity_index, ego_ops):
+                        continue
+                    checkable += 1
+                    if sym_validator._evaluate_grounding(fg.conditions, entity_index, ego_ops):
                         grounded += 1
                 grounding_score = grounded / checkable if checkable > 0 else 1.0
                 stats["grounding_scores"].append(grounding_score)
