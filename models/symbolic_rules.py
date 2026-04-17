@@ -182,6 +182,7 @@ class SymbolicSchema:
         self.fact_vocabulary: set[str] = set(cfg["facts"])
         self.lateral_actions: set[str] = set(cfg["actions"]["lateral"])
         self.longitudinal_actions: set[str] = set(cfg["actions"]["longitudinal"])
+        self.thresholds: dict = cfg.get("thresholds", {})
 
         # Build type maps
         self._subtype_to_base: dict[str, str] = {}
@@ -235,14 +236,46 @@ class SymbolicSchema:
         with open(rlib_dir / "actions.yaml") as f:
             actions = yaml.safe_load(f)
 
+        thresholds_path = rlib_dir / "thresholds.yaml"
+        thresholds: dict = {}
+        if thresholds_path.exists():
+            with open(thresholds_path) as f:
+                thresholds = yaml.safe_load(f) or {}
+
         cfg = {
             "entities": entities,
             "operations": operations,
             "facts": facts_file["vocabulary"],
             "actions": actions,
             "fact_groundings": facts_file.get("groundings", {}),
+            "thresholds": thresholds,
         }
         self._init_from_cfg(cfg)
+
+    # --- Threshold bucketing -------------------------------------------------
+
+    def bucketize(self, dim: str, value: float) -> str:
+        """Map a raw numeric value to a qualitative label using thresholds.yaml.
+
+        Buckets are consulted in order; returns the first label whose `max` is
+        not exceeded by `value`. The final bucket has no `max` (open-ended).
+        """
+        dim_cfg = self.thresholds.get(dim)
+        if not dim_cfg:
+            raise KeyError(f"No thresholds defined for dimension {dim!r}")
+        buckets = dim_cfg.get("buckets", [])
+        if not buckets:
+            raise ValueError(f"thresholds[{dim!r}] has no buckets")
+        for b in buckets:
+            if "max" not in b:
+                return b["label"]
+            if value < b["max"]:
+                return b["label"]
+        return buckets[-1]["label"]
+
+    def get_unit(self, dim: str) -> str:
+        """Return the unit string for a thresholded dimension, or ''."""
+        return self.thresholds.get(dim, {}).get("unit", "")
 
     def get_fact_grounding(self, fact_name: str) -> Optional[FactGrounding]:
         """Return grounding conditions for a fact, or None."""
@@ -701,13 +734,19 @@ class SymbolicValidator:
 
     @staticmethod
     def _extract_ego_ops(operations: list[Operation]) -> dict[str, str]:
-        """Extract EgoQuery results as {attribute: value}."""
+        """Extract EgoQuery results as {attribute: value}.
+
+        Strips inline `# ...` comments (used to annotate raw numeric values,
+        e.g. ``EgoQuery(speed) = Medium  # 7.8 m/s``) so downstream grounding
+        equality checks compare only the qualitative label.
+        """
         result = {}
         for op in operations:
             if op.op_type == "EgoQuery":
                 m = re.match(r"EgoQuery\((\w+)\)", op.expression)
                 if m:
-                    result[m.group(1)] = op.result
+                    label = op.result.split("#", 1)[0].strip()
+                    result[m.group(1)] = label
         return result
 
     def _evaluate_grounding(

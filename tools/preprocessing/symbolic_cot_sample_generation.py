@@ -76,7 +76,8 @@ class SymbolicPromptWrapper:
 
         # Quantize ego state
         ego_qual = ego_state_to_qualitative(
-            sample["velocity"], sample["acceleration"], sample["instruction"]
+            sample["velocity"], sample["acceleration"], sample["instruction"],
+            self.rlib_dir,
         )
 
         # Load NL CoT reference if available

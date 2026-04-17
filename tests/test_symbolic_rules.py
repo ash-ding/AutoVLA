@@ -879,3 +879,100 @@ ACTION: KeepLane, Stop"""
     def test_grounding_warnings_in_result(self):
         result = compute_symbolic_complexity(FULL_EXAMPLE, SCHEMA_PATH)
         assert "grounding_warnings" in result
+
+
+# ---------------------------------------------------------------------------
+# Threshold bucketization (RLIB/thresholds.yaml)
+# ---------------------------------------------------------------------------
+
+class TestThresholds:
+    """Thresholds externalized to RLIB/thresholds.yaml and consumed via
+    SymbolicSchema.bucketize()."""
+
+    def test_schema_loads_thresholds(self, schema):
+        assert "speed" in schema.thresholds
+        assert "acceleration" in schema.thresholds
+        assert schema.get_unit("speed") == "m/s"
+        assert schema.get_unit("acceleration") == "m/s^2"
+
+    @pytest.mark.parametrize("value,expected", [
+        (0.0,  "Stopped"),
+        (0.29, "Stopped"),
+        (0.30, "Slow"),      # boundary: < max means the previous bucket stops
+        (2.99, "Slow"),
+        (3.0,  "Medium"),
+        (7.99, "Medium"),
+        (8.0,  "Fast"),
+        (20.0, "Fast"),
+    ])
+    def test_bucketize_speed(self, schema, value, expected):
+        assert schema.bucketize("speed", value) == expected
+
+    @pytest.mark.parametrize("value,expected", [
+        (-3.0, "Braking"),
+        (-0.51, "Braking"),
+        (-0.5, "Coasting"),   # boundary
+        (0.0,  "Coasting"),
+        (0.49, "Coasting"),
+        (0.5,  "Accelerating"),
+        (3.0,  "Accelerating"),
+    ])
+    def test_bucketize_acceleration(self, schema, value, expected):
+        assert schema.bucketize("acceleration", value) == expected
+
+    def test_bucketize_unknown_dim_raises(self, schema):
+        with pytest.raises(KeyError):
+            schema.bucketize("torque", 1.0)
+
+
+# ---------------------------------------------------------------------------
+# Raw-value annotation format: `EgoQuery(speed) = Label  # 7.8 m/s`
+# ---------------------------------------------------------------------------
+
+class TestRawAnnotationGrounding:
+    """Grounding equality must work when operation results carry `# raw unit`
+    annotations injected by the prompt builder."""
+
+    @pytest.fixture
+    def warn_validator(self, schema):
+        return SymbolicValidator(schema, grounding_strictness="warn")
+
+    def test_ego_grounded_with_raw_annotation(self, warn_validator):
+        """EgoStopped = True with `EgoQuery(speed) = Stopped  # 0.1 m/s` — must pass."""
+        output = SymbolicOutput(
+            entities=[],
+            operations=[Operation("EgoQuery", "EgoQuery(speed)", "Stopped  # 0.1 m/s")],
+            facts=[Fact("EgoStopped", True)],
+            rules=[Rule([("EgoStopped", True)], "KeepLane", "Stop")],
+            selected_lateral="KeepLane",
+            selected_longitudinal="Stop",
+        )
+        _, _, warnings = warn_validator.validate(output)
+        assert not any("EgoStopped" in w for w in warnings)
+
+    def test_ego_ungrounded_with_raw_annotation(self, warn_validator):
+        """Label mismatch must still warn — the comment doesn't hide a wrong label."""
+        output = SymbolicOutput(
+            entities=[],
+            operations=[Operation("EgoQuery", "EgoQuery(speed)", "Fast  # 12.3 m/s")],
+            facts=[Fact("EgoStopped", True)],
+            rules=[Rule([("EgoStopped", True)], "KeepLane", "Stop")],
+            selected_lateral="KeepLane",
+            selected_longitudinal="Stop",
+        )
+        _, _, warnings = warn_validator.validate(output)
+        assert any("EgoStopped" in w for w in warnings)
+
+    def test_extract_ego_ops_strips_comment(self):
+        """_extract_ego_ops returns the bare label, not the raw annotation."""
+        ops = [
+            Operation("EgoQuery", "EgoQuery(speed)", "Medium  # 7.8 m/s"),
+            Operation("EgoQuery", "EgoQuery(acceleration)", "Coasting  # -0.20 m/s^2"),
+            Operation("EgoQuery", "EgoQuery(instruction)", "KeepForward"),
+        ]
+        extracted = SymbolicValidator._extract_ego_ops(ops)
+        assert extracted == {
+            "speed": "Medium",
+            "acceleration": "Coasting",
+            "instruction": "KeepForward",
+        }

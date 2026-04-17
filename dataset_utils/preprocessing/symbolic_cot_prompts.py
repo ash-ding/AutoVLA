@@ -13,6 +13,8 @@ from functools import lru_cache
 
 import yaml
 
+from models.symbolic_rules import SymbolicSchema
+
 
 # ---------------------------------------------------------------------------
 # Action string → symbolic mapping
@@ -71,42 +73,49 @@ def action_string_to_symbolic(action_str: str) -> tuple[str, str]:
 # Ego state → qualitative mapping
 # ---------------------------------------------------------------------------
 
+@lru_cache(maxsize=4)
+def _get_schema(rlib_dir: str) -> SymbolicSchema:
+    """Cached SymbolicSchema for a given RLIB directory."""
+    return SymbolicSchema(Path(rlib_dir))
+
+
 def ego_state_to_qualitative(
     velocity: list[float],
     acceleration: list[float],
     instruction: str,
-) -> dict[str, str]:
+    rlib_dir: str | Path,
+) -> dict:
     """Map raw numeric ego state to symbolic EgoQuery vocabulary.
 
     Args:
         velocity: [vx, vy] in m/s
         acceleration: [ax, ay] in m/s^2
         instruction: e.g. "turn left", "keep forward", "go straight"
+        rlib_dir: Path to RLIB directory (for threshold lookup).
 
     Returns:
-        {"speed": ..., "acceleration": ..., "instruction": ...}
+        {
+            "speed":        {"label": "Medium", "raw": 7.8, "unit": "m/s"},
+            "acceleration": {"label": "Coasting", "raw": 0.3, "unit": "m/s^2"},
+            "instruction":  "KeepForward",
+        }
     """
-    # Speed from velocity magnitude
+    schema = _get_schema(str(rlib_dir))
+
     speed_mag = math.sqrt(velocity[0] ** 2 + velocity[1] ** 2)
-    if speed_mag < 0.3:
-        speed = "Stopped"
-    elif speed_mag < 3.0:
-        speed = "Slow"
-    elif speed_mag < 8.0:
-        speed = "Medium"
-    else:
-        speed = "Fast"
+    ax = float(acceleration[0])
 
-    # Acceleration from x-direction (primary driving direction)
-    ax = acceleration[0]
-    if ax < -0.5:
-        accel = "Braking"
-    elif ax > 0.5:
-        accel = "Accelerating"
-    else:
-        accel = "Coasting"
+    speed = {
+        "label": schema.bucketize("speed", speed_mag),
+        "raw": speed_mag,
+        "unit": schema.get_unit("speed"),
+    }
+    accel = {
+        "label": schema.bucketize("acceleration", ax),
+        "raw": ax,
+        "unit": schema.get_unit("acceleration"),
+    }
 
-    # Instruction mapping
     inst_lower = instruction.strip().lower()
     if "left" in inst_lower:
         inst = "TurnLeft"
@@ -153,12 +162,18 @@ def _load_rlib_prompt_sections(rlib_dir: str) -> dict[str, str]:
     entity_types_text = (
         "ENTITY DECLARATION RULES:\n"
         "1. In PERCEPTION, ALWAYS use the specific subtype as the class name — NEVER the base type.\n"
-        "   RIGHT: `v_1 = Truck {position: Front}`   WRONG: `v_1 = Vehicle {subtype: Truck}` or `{type: Truck}`\n"
-        "   RIGHT: `r_1 = Crosswalk {position: Ahead}` WRONG: `r_1 = RoadFeature {subtype: Crosswalk}` or `{type: Crosswalk}`\n"
-        "   RIGHT: `ts_1 = StopSign {position: Front}`  WRONG: `ts_1 = TrafficSign {subtype: StopSign}` or `{type: StopSign}`\n"
+        "   RIGHT: `v_1 = Truck {position: Front, lane: EgoLane, distance: Near, motion: Moving}`\n"
+        "   WRONG: `v_1 = Vehicle {subtype: Truck}` or `{type: Truck}`\n"
+        "   RIGHT: `r_1 = Crosswalk {position: Ahead, distance: Near}`\n"
+        "   WRONG: `r_1 = RoadFeature {subtype: Crosswalk}` or `{type: Crosswalk}`\n"
+        "   RIGHT: `ts_1 = StopSign {position: Front, distance: Near}`\n"
+        "   WRONG: `ts_1 = TrafficSign {subtype: StopSign}` or `{type: StopSign}`\n"
         "2. In OPERATIONS, use the base type for filtering: Filter(Vehicle, ...), Filter(RoadFeature, ...).\n"
         "3. Do NOT add `subtype:`, `type:`, or any extra field — only the listed attributes are valid.\n"
         "4. Use ONLY types listed below. Do NOT invent types (no 'Taxi', 'Bike', 'Signal', etc.).\n"
+        "5. When declaring an entity, populate EVERY attribute listed for its base type "
+        "(see ENTITY TYPES below). Omitting an attribute can cause downstream FACTS that "
+        "depend on it to be unsupported. If unsure of a value, choose the closest valid one.\n"
         "ATTRIBUTE VOCABULARY (exact values only):\n"
         "  Vehicle.motion: Stationary/Moving/Approaching/Receding/Decelerating/Accelerating (NOT 'Stopped')\n"
         "  Pedestrian.motion: Standing/Walking/Running/Crossing (NOT 'Waiting')\n"
@@ -233,7 +248,8 @@ PERCEPTION:
 OPERATIONS:
   Query(tl_1, color) = Red
   Filter(Vehicle, lane = EgoLane) = {v_1}
-  EgoQuery(speed) = Slow
+  EgoQuery(speed) = Slow  # 1.8 m/s
+  EgoQuery(acceleration) = Braking  # -1.20 m/s^2
   EgoQuery(instruction) = KeepForward
 
 FACTS:
@@ -257,7 +273,8 @@ PERCEPTION:
 
 OPERATIONS:
   Query(tl_1, color) = Green
-  EgoQuery(speed) = Medium
+  EgoQuery(speed) = Medium  # 6.5 m/s
+  EgoQuery(acceleration) = Coasting  # 0.10 m/s^2
   EgoQuery(instruction) = KeepForward
 
 FACTS:
@@ -277,7 +294,8 @@ PERCEPTION:
 
 OPERATIONS:
   Query(tl_1, color) = Yellow
-  EgoQuery(speed) = Medium
+  EgoQuery(speed) = Medium  # 7.2 m/s
+  EgoQuery(acceleration) = Braking  # -0.80 m/s^2
   EgoQuery(instruction) = KeepForward
 
 FACTS:
@@ -299,8 +317,8 @@ PERCEPTION:
 
 OPERATIONS:
   Filter(Vehicle, lane = EgoLane) = {v_1}
-  EgoQuery(speed) = Medium
-  EgoQuery(acceleration) = Coasting
+  EgoQuery(speed) = Medium  # 5.4 m/s
+  EgoQuery(acceleration) = Coasting  # -0.20 m/s^2
   EgoQuery(instruction) = KeepForward
 
 FACTS:
@@ -322,8 +340,8 @@ ACTION: KeepLane, Deceleration"""
 def get_symbolic_cot_prompt(
     rlib_dir: str,
     fut_ego_action: str,
-    ego_speed: str,
-    ego_acceleration: str,
+    ego_speed: dict,
+    ego_acceleration: dict,
     ego_instruction: str,
     nl_cot_reference: str | None = None,
     use_predefined_rules: bool = True,
@@ -333,8 +351,8 @@ def get_symbolic_cot_prompt(
     Args:
         rlib_dir: Path to RLIB directory.
         fut_ego_action: Free-form GT action string (e.g. "move forward with a deceleration").
-        ego_speed: Qualitative speed ("Stopped"/"Slow"/"Medium"/"Fast").
-        ego_acceleration: Qualitative acceleration ("Braking"/"Coasting"/"Accelerating").
+        ego_speed: {"label": str, "raw": float, "unit": str} — qualitative label + raw m/s.
+        ego_acceleration: {"label": str, "raw": float, "unit": str} — qualitative label + raw m/s^2.
         ego_instruction: Qualitative instruction ("KeepForward"/"TurnLeft"/"TurnRight").
 
     Returns:
@@ -381,8 +399,8 @@ def get_symbolic_cot_prompt(
         ) +
 
         "=== EGO VEHICLE STATE ===\n"
-        f"EgoQuery(speed) = {ego_speed}\n"
-        f"EgoQuery(acceleration) = {ego_acceleration}\n"
+        f"EgoQuery(speed) = {ego_speed['label']}  # {ego_speed['raw']:.1f} {ego_speed['unit']}\n"
+        f"EgoQuery(acceleration) = {ego_acceleration['label']}  # {ego_acceleration['raw']:.2f} {ego_acceleration['unit']}\n"
         f"EgoQuery(instruction) = {ego_instruction}\n\n"
 
         + (
