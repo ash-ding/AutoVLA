@@ -11,6 +11,10 @@
 #
 # Multiple conditions per fact = OR (any branch satisfies).
 # Within one condition: attributes = AND, attr_in = value in set.
+#
+# DESCRIPTION CONVENTIONS (read this — these descriptions are shown to the model):
+#   - Each description spells out the EXACT entity attributes required so the
+#     model can declare the corresponding entity in PERCEPTION correctly.
 
 vocabulary:
   # Traffic signal
@@ -66,7 +70,7 @@ groundings:
   # --- Traffic Signal ---
 
   RedLight:
-    description: "Traffic light controlling ego lane (applies_to EgoLane or All) shows Red"
+    description: "True iff PERCEPTION declares a TrafficLight with color=Red AND applies_to in {EgoLane, All}"
     category: traffic_signal
     conditions:
       - kind: entity
@@ -75,7 +79,7 @@ groundings:
         attr_in: {applies_to: [EgoLane, All]}
 
   YellowLight:
-    description: "Traffic light controlling ego lane (applies_to EgoLane or All) shows Yellow"
+    description: "True iff PERCEPTION declares a TrafficLight with color=Yellow AND applies_to in {EgoLane, All}"
     category: traffic_signal
     conditions:
       - kind: entity
@@ -84,7 +88,7 @@ groundings:
         attr_in: {applies_to: [EgoLane, All]}
 
   GreenLight:
-    description: "Traffic light controlling ego lane (applies_to EgoLane or All) shows Green"
+    description: "True iff PERCEPTION declares a TrafficLight with color=Green AND applies_to in {EgoLane, All}"
     category: traffic_signal
     conditions:
       - kind: entity
@@ -93,7 +97,7 @@ groundings:
         attr_in: {applies_to: [EgoLane, All]}
 
   NoTrafficLight:
-    description: "No traffic light applies to ego lane — treat as uncontrolled"
+    description: "True iff PERCEPTION declares NO TrafficLight with applies_to in {EgoLane, All}"
     category: traffic_signal
     conditions:
       - kind: no_entity
@@ -103,7 +107,7 @@ groundings:
   # --- Road Structure ---
 
   ApproachingIntersection:
-    description: "An intersection is ahead at close range (distance Near or VeryNear)"
+    description: "True iff PERCEPTION declares an Intersection with position=Ahead AND distance in {Near, VeryNear}"
     category: road_structure
     conditions:
       - kind: entity
@@ -113,7 +117,7 @@ groundings:
         attr_in: {distance: [Near, VeryNear]}
 
   AtIntersection:
-    description: "Ego vehicle is currently inside an intersection (position Current or distance VeryNear)"
+    description: "True iff PERCEPTION declares an Intersection with position=Current, OR an Intersection with distance=VeryNear"
     category: road_structure
     conditions:
       - kind: entity
@@ -126,7 +130,7 @@ groundings:
         attr_in: {distance: [VeryNear]}
 
   ApproachingCrosswalk:
-    description: "A crosswalk is ahead at close range (distance Near or VeryNear)"
+    description: "True iff PERCEPTION declares a Crosswalk with position=Ahead AND distance in {Near, VeryNear}"
     category: road_structure
     conditions:
       - kind: entity
@@ -136,7 +140,7 @@ groundings:
         attr_in: {distance: [Near, VeryNear]}
 
   InMergeZone:
-    description: "Ego vehicle is at or entering a merge point (distance VeryNear or position Current)"
+    description: "True iff PERCEPTION declares a MergePoint with position=Current, OR a MergePoint with distance=VeryNear"
     category: road_structure
     conditions:
       - kind: entity
@@ -149,7 +153,7 @@ groundings:
         attr_in: {distance: [VeryNear]}
 
   InConstructionZone:
-    description: "Ego vehicle is in a work/construction zone"
+    description: "True iff PERCEPTION declares a WorkZone with position=Current, OR a WorkZone with distance=VeryNear"
     category: road_structure
     conditions:
       - kind: entity
@@ -162,7 +166,7 @@ groundings:
         attr_in: {distance: [VeryNear]}
 
   InSchoolZone:
-    description: "A school zone sign is visible"
+    description: "True iff PERCEPTION declares a SchoolZone TrafficSign"
     category: road_structure
     conditions:
       - kind: entity
@@ -172,7 +176,7 @@ groundings:
   # --- Lead Vehicle ---
 
   LeadVehiclePresent:
-    description: "A vehicle is directly ahead in the ego lane"
+    description: "True iff PERCEPTION declares a Vehicle with position=Front AND lane=EgoLane"
     category: lead_vehicle
     conditions:
       - kind: entity
@@ -180,7 +184,7 @@ groundings:
         attributes: {position: Front, lane: EgoLane}
 
   LeadVehicleClose:
-    description: "A vehicle ahead in the ego lane is at close distance (VeryNear or Near)"
+    description: "True iff PERCEPTION declares a Vehicle with position=Front, lane=EgoLane, AND distance in {Near, VeryNear}"
     category: lead_vehicle
     conditions:
       - kind: entity
@@ -189,7 +193,7 @@ groundings:
         attr_in: {distance: [VeryNear, Near]}
 
   LeadVehicleBraking:
-    description: "Lead vehicle is braking — brake lights on OR motion is Decelerating"
+    description: "True iff PERCEPTION declares a Vehicle with position=Front AND lane=EgoLane AND (signal=BrakeLights OR motion=Decelerating)"
     category: lead_vehicle
     conditions:
       - kind: entity
@@ -200,7 +204,7 @@ groundings:
         attributes: {position: Front, lane: EgoLane, motion: Decelerating}
 
   LeadVehicleStopped:
-    description: "Lead vehicle in ego lane is stationary"
+    description: "True iff PERCEPTION declares a Vehicle with position=Front, lane=EgoLane, motion=Stationary"
     category: lead_vehicle
     conditions:
       - kind: entity
@@ -208,7 +212,7 @@ groundings:
         attributes: {position: Front, lane: EgoLane, motion: Stationary}
 
   PathBlocked:
-    description: "A stationary vehicle blocks the ego lane at close range"
+    description: "True iff PERCEPTION declares a Vehicle with position=Front, lane=EgoLane, motion=Stationary, AND distance in {Near, VeryNear}"
     category: lead_vehicle
     conditions:
       - kind: entity
@@ -219,7 +223,7 @@ groundings:
   # --- Pedestrians ---
 
   PedestrianCrossing:
-    description: "A pedestrian is actively crossing the road"
+    description: "True iff PERCEPTION declares a Pedestrian with motion=Crossing"
     category: pedestrians
     conditions:
       - kind: entity
@@ -227,7 +231,7 @@ groundings:
         attributes: {motion: Crossing}
 
   PedestrianWaiting:
-    description: "A pedestrian is standing near the road (crosswalk, road, or shoulder), appearing to wait"
+    description: "True iff PERCEPTION declares a Pedestrian with motion=Standing AND location in {Crosswalk, Road, Shoulder}"
     category: pedestrians
     conditions:
       - kind: entity
@@ -236,7 +240,7 @@ groundings:
         attr_in: {location: [Crosswalk, Road, Shoulder]}
 
   CrosswalkOccupied:
-    description: "A pedestrian is on the crosswalk"
+    description: "True iff PERCEPTION declares a Pedestrian with location=Crosswalk (any motion)"
     category: pedestrians
     conditions:
       - kind: entity
@@ -246,7 +250,7 @@ groundings:
   # --- Ego State ---
 
   EgoStopped:
-    description: "Ego vehicle is currently stopped (speed = Stopped)"
+    description: "True iff EgoQuery(speed) = Stopped"
     category: ego_state
     conditions:
       - kind: ego
@@ -254,7 +258,7 @@ groundings:
         value: Stopped
 
   EgoMovingSlow:
-    description: "Ego vehicle is moving at low speed (speed = Slow)"
+    description: "True iff EgoQuery(speed) = Slow"
     category: ego_state
     conditions:
       - kind: ego
@@ -262,7 +266,7 @@ groundings:
         value: Slow
 
   CanStopComfortably:
-    description: "Ego can brake to a full stop before the stop point without harsh deceleration"
+    description: "Judgment fact: ego can brake to a full stop before the stop point without harsh deceleration. No automatic check — the model must reason from ego speed and distance to the nearest stop-requiring entity (traffic light, stop sign, lead vehicle, crosswalk). Slow speed or far distance generally implies True; fast speed with very near distance implies False."
     category: ego_state
     conditions:
       - kind: judgment
@@ -273,7 +277,7 @@ groundings:
           implies False.
 
   InstructionTurnLeft:
-    description: "Navigation instruction for this step is to turn left"
+    description: "True iff EgoQuery(instruction) = TurnLeft"
     category: ego_state
     conditions:
       - kind: ego
@@ -281,7 +285,7 @@ groundings:
         value: TurnLeft
 
   InstructionTurnRight:
-    description: "Navigation instruction for this step is to turn right"
+    description: "True iff EgoQuery(instruction) = TurnRight"
     category: ego_state
     conditions:
       - kind: ego
@@ -289,7 +293,7 @@ groundings:
         value: TurnRight
 
   InstructionKeepForward:
-    description: "Navigation instruction for this step is to keep going forward"
+    description: "True iff EgoQuery(instruction) = KeepForward"
     category: ego_state
     conditions:
       - kind: ego
@@ -299,7 +303,7 @@ groundings:
   # --- Safety ---
 
   EmergencyVehicleNearby:
-    description: "An emergency vehicle is present anywhere in the scene"
+    description: "True iff PERCEPTION declares an EmergencyVehicle (subtype of Vehicle)"
     category: safety
     conditions:
       - kind: entity
@@ -307,7 +311,7 @@ groundings:
         subtype: EmergencyVehicle
 
   OncomingTraffic:
-    description: "A vehicle is in the oncoming lane"
+    description: "True iff PERCEPTION declares a Vehicle with lane=OncomingLane"
     category: safety
     conditions:
       - kind: entity
@@ -315,7 +319,7 @@ groundings:
         attributes: {lane: OncomingLane}
 
   AdjacentVehicleClose:
-    description: "A vehicle in an adjacent lane (left, right, or adjacent) is at close distance"
+    description: "True iff PERCEPTION declares a Vehicle with lane in {LeftLane, RightLane, Adjacent} AND distance in {Near, VeryNear}"
     category: safety
     conditions:
       - kind: entity
@@ -323,7 +327,7 @@ groundings:
         attr_in: {lane: [LeftLane, RightLane, Adjacent], distance: [VeryNear, Near]}
 
   RearVehicleApproaching:
-    description: "A vehicle behind is approaching (closing distance)"
+    description: "True iff PERCEPTION declares a Vehicle with position=Behind AND motion=Approaching"
     category: safety
     conditions:
       - kind: entity
@@ -331,7 +335,7 @@ groundings:
         attributes: {position: Behind, motion: Approaching}
 
   LeftLaneClear:
-    description: "No vehicle detected in LeftLane at close range (VeryNear or Near)"
+    description: "True iff PERCEPTION declares NO Vehicle with (lane=LeftLane AND distance in {Near, VeryNear})"
     category: safety
     conditions:
       - kind: no_entity
@@ -339,7 +343,7 @@ groundings:
         attr_in: {lane: [LeftLane], distance: [VeryNear, Near]}
 
   RightLaneClear:
-    description: "No vehicle detected in RightLane at close range (VeryNear or Near)"
+    description: "True iff PERCEPTION declares NO Vehicle with (lane=RightLane AND distance in {Near, VeryNear})"
     category: safety
     conditions:
       - kind: no_entity
@@ -349,7 +353,7 @@ groundings:
   # --- Traffic Signs ---
 
   StopSignPresent:
-    description: "A stop sign is visible ahead"
+    description: "True iff PERCEPTION declares a StopSign TrafficSign"
     category: traffic_signs
     conditions:
       - kind: entity
@@ -357,7 +361,7 @@ groundings:
         subtype: StopSign
 
   YieldSignPresent:
-    description: "A yield sign is visible ahead"
+    description: "True iff PERCEPTION declares a YieldSign TrafficSign"
     category: traffic_signs
     conditions:
       - kind: entity
@@ -365,7 +369,7 @@ groundings:
         subtype: YieldSign
 
   NoTurnOnRedSign:
-    description: "A no-turn-on-red sign is visible"
+    description: "True iff PERCEPTION declares a NoTurnOnRed TrafficSign"
     category: traffic_signs
     conditions:
       - kind: entity
@@ -373,7 +377,7 @@ groundings:
         subtype: NoTurnOnRed
 
   SpeedLimitLow:
-    description: "A speed limit sign is visible (implying a low-speed zone)"
+    description: "True iff PERCEPTION declares a SpeedLimit TrafficSign (implying a low-speed zone)"
     category: traffic_signs
     conditions:
       - kind: entity
