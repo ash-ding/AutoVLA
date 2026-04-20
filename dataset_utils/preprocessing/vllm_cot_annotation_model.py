@@ -14,12 +14,13 @@ class CoTAnnotationModel():
             tensor_parallel_size=tensor_parallel_size,
             gpu_memory_utilization=0.90,
             max_num_seqs=max_num_seqs,
+            max_model_len=config.get('max_model_len', 8192),
             limit_mm_per_prompt={"image": 20, "video": 20},
-            enforce_eager=True,
+            enforce_eager=False,
             disable_custom_all_reduce=True,
         )
         self.sampling_params = SamplingParams(
-            max_tokens=config.get('max_tokens', 700),
+            max_tokens=config.get('max_tokens', 400),
             temperature=config.get('temperature', 0),
         )
 

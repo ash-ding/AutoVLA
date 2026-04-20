@@ -1,14 +1,16 @@
-name: qwen2.5-vl-72B-nuplan
-description: Preprocessing dataset for AutoVLA with Qwen 2.5 VL 72B model on NuPlan dataset for CoT generation
+name: qwen2.5-vl-72B-nuplan-8gpu-tp1
+description: Preprocessing dataset for AutoVLA with Qwen 2.5 VL 72B model on NuPlan dataset for CoT generation — 8 shards, 1 GPU each (TP=1) for A100-80GB
 
 # model
 pretrained_model_path: /root/AutoVLA/autovla_models/Qwen2.5-VL-72B-Instruct-AWQ
-tensor_parallel_size: 8
+tensor_parallel_size: 1
 
 # training
 batch_size: 32
-max_num_seqs: 16
-num_workers: 32
+max_num_seqs: 32
+max_model_len: 8192
+prefetch_factor: 4
+num_workers: 4
 
 # dataset (the split should match the dataset path)
 dataset_name: nuplan
