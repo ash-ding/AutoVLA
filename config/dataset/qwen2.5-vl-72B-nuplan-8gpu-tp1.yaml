@@ -6,9 +6,9 @@ pretrained_model_path: /root/AutoVLA/autovla_models/Qwen2.5-VL-72B-Instruct-AWQ
 tensor_parallel_size: 1
 
 # training
-batch_size: 32
-max_num_seqs: 32
-max_model_len: 8192
+batch_size: 16
+max_num_seqs: 16
+max_model_len: 16384
 prefetch_factor: 4
 num_workers: 4
 

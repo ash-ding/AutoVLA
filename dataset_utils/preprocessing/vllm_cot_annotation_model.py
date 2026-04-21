@@ -20,7 +20,7 @@ class CoTAnnotationModel():
             disable_custom_all_reduce=True,
         )
         self.sampling_params = SamplingParams(
-            max_tokens=config.get('max_tokens', 400),
+            max_tokens=config.get('max_tokens', 16384),
             temperature=config.get('temperature', 0),
         )
 

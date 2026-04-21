@@ -6,9 +6,14 @@ import torch
 from tqdm import tqdm
 from pytorch_lightning import seed_everything
 from transformers import AutoProcessor
-from torch.utils.data import DataLoader
-import shutil
+from torch.utils.data import DataLoader, Subset
 from dataset_utils.preprocessing.nuplan_dataset import NuplanCoTAnnotationDataset, DataCollator as NuplanDataCollator
+from tools.preprocessing.sample_selection_utils import (
+    collect_processed_tokens,
+    get_dataset_tokens,
+    load_token_list,
+    resolve_indices_from_tokens,
+)
 
 
 CAM_LIST = ['front', 'front_left', 'front_right', 
@@ -80,22 +85,32 @@ if __name__ == "__main__":
     parser.add_argument("--pre_generated_dir", type=str, default=None,
                         help="Directory containing pre-generated scene JSON files")
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument(
+        "--sample-ids-json",
+        type=str,
+        default=None,
+        help="JSON file containing the tokens to preprocess",
+    )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Skip tokens that already have JSON outputs",
+    )
+    parser.add_argument(
+        "--resume-dir",
+        action="append",
+        default=None,
+        help="Directory to scan for existing token JSONs. Can be passed multiple times.",
+    )
     args = parser.parse_args()
     seed_everything(args.seed)
 
     # load pre generated tokens
-    print("Collecting pre generated tokens from JSON sample files...")
+    print("Collecting pre-generated tokens from JSON sample files...")
     pre_generated_tokens = set()
     if args.pre_generated_dir is not None:
         if os.path.exists(args.pre_generated_dir):
-            for file in os.listdir(args.pre_generated_dir):
-                if file.endswith('.json'):
-                    token = os.path.splitext(file)[0]
-                    pre_generated_tokens.add(token)
-            pregen_paths = {
-                tok: os.path.join(args.pre_generated_dir, f"{tok}.json")
-                for tok in pre_generated_tokens
-            }
+            pre_generated_tokens = collect_processed_tokens([args.pre_generated_dir])
         else:
             print(f"Pre_generated_dir {args.pre_generated_dir} does not exist.")
 
@@ -119,16 +134,66 @@ if __name__ == "__main__":
     # Create output directory if it does not exist.
     os.makedirs(args.output_dir, exist_ok=True)
 
+    dataset_tokens = get_dataset_tokens(dataset)
+    requested_tokens = None
+    missing_tokens = []
+
+    if args.sample_ids_json is not None:
+        requested_tokens = load_token_list(args.sample_ids_json)
+        selected_indices, missing_tokens = resolve_indices_from_tokens(
+            dataset_tokens,
+            requested_tokens,
+        )
+    else:
+        selected_indices = list(range(len(dataset)))
+
+    resume_dirs = list(args.resume_dir or [])
+    if args.resume and not resume_dirs:
+        resume_dirs.append(args.output_dir)
+
+    processed_tokens = set(pre_generated_tokens)
+    if args.resume:
+        processed_tokens.update(collect_processed_tokens(resume_dirs))
+
+    if processed_tokens:
+        selected_indices = [
+            idx for idx in selected_indices if dataset_tokens[idx] not in processed_tokens
+        ]
+
+    print(
+        f"Selected {len(selected_indices)} samples from dataset of size {len(dataset)}."
+    )
+    if requested_tokens is not None:
+        print(
+            f"Loaded {len(requested_tokens)} requested tokens from {args.sample_ids_json}."
+        )
+        if missing_tokens:
+            preview = ", ".join(missing_tokens[:10])
+            print(
+                f"Skipped {len(missing_tokens)} requested tokens not found in the dataset split. "
+                f"Examples: {preview}"
+            )
+    if processed_tokens:
+        print(f"Skipping {len(processed_tokens)} tokens already present in output directories.")
+    if not selected_indices:
+        print("No samples left to process.")
+        raise SystemExit(0)
+
     # Use DataLoader to load samples concurrently.
-    data_loader = DataLoader(dataset, batch_size=1, num_workers=args.num_workers, 
-                             collate_fn=collator, shuffle=True)
+    data_loader = DataLoader(
+        Subset(dataset, selected_indices),
+        batch_size=1,
+        num_workers=args.num_workers,
+        collate_fn=collator,
+        shuffle=False,
+    )
     
-    for batch in tqdm(data_loader, total=len(dataset), desc="Processing samples"):
+    for batch in tqdm(data_loader, total=len(selected_indices), desc="Processing samples"):
         # Since batch_size=1, extract the single sample.
         sample = {key: batch[key][0] for key in batch}
         token, result = process_sample(sample, dataset_name)
         
-        if token in pre_generated_tokens:
+        if token in processed_tokens:
             continue
 
         output_path = os.path.join(args.output_dir, f"{token}.json")

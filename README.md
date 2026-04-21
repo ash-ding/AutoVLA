@@ -99,6 +99,12 @@ You can perform the command to preprocess the nuPlan dataset. Please first revis
 ```bash
 bash scripts/run_nuplan_preprocessing.sh
 ```
+To preprocess only a saved subset of nuPlan tokens and make the job resumable after interruption, pass your token JSON and `--resume`:
+```bash
+bash scripts/run_nuplan_preprocessing.sh \
+    --sample-ids-json /data/nuplan_random_45600_ids.json \
+    --resume
+```
 #### Waymo E2E Dataset
 To organize the image data and support random access, we first cache the image data in the same format as the other dataset we used.
 ```bash

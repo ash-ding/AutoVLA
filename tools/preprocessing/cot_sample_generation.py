@@ -4,6 +4,13 @@ import yaml
 import argparse
 from tqdm import tqdm
 import json
+from tools.preprocessing.sample_selection_utils import (
+    collect_processed_tokens,
+    get_dataset_tokens,
+    load_token_list,
+    partition_indices,
+    resolve_indices_from_tokens,
+)
 
 CAM_LIST = ['front', 'front_left', 'front_right',
             'back', 'back_left', 'back_right', 'left', 'right']
@@ -81,6 +88,23 @@ if __name__ == "__main__":
     parser.add_argument("--seed", type=int, default=42, help='Random seed which identifies the sample generation')
     parser.add_argument("--sample_num", type=int, default=1, help='Sample number to process')
     parser.add_argument("--num_parts", type=int, default=1, help='Number of parts to split the dataset into')
+    parser.add_argument(
+        "--sample-ids-json",
+        type=str,
+        default=None,
+        help="JSON file containing the tokens to preprocess",
+    )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Skip tokens that already have JSON outputs",
+    )
+    parser.add_argument(
+        "--resume-dir",
+        action="append",
+        default=None,
+        help="Directory to scan for existing token JSONs. Can be passed multiple times.",
+    )
     args = parser.parse_args()
 
     # Load configuration
@@ -132,18 +156,59 @@ if __name__ == "__main__":
     else:
         raise ValueError(f"Invalid dataset name: {dataset_name}")
 
-    indices = list(range(len(val_dataset)))
-    random.shuffle(indices)
+    dataset_tokens = get_dataset_tokens(val_dataset)
+    requested_tokens = None
+    missing_tokens = []
 
-    # seperate the dataset to num_parts samples
-    if args.sample_num != 0:
-        total_len = len(indices)
-        part_len = total_len // args.num_parts
-        start_idx = (args.sample_num - 1) * part_len
-        end_idx = args.sample_num * part_len if args.sample_num < args.num_parts else total_len
-        selected_indices = indices[start_idx:end_idx]
+    if args.sample_ids_json is not None:
+        requested_tokens = load_token_list(args.sample_ids_json)
+        indices, missing_tokens = resolve_indices_from_tokens(
+            dataset_tokens,
+            requested_tokens,
+        )
     else:
-        selected_indices = indices
+        indices = list(range(len(val_dataset)))
+        random.shuffle(indices)
+
+    selected_indices = partition_indices(indices, args.sample_num, args.num_parts)
+
+    resume_dirs = args.resume_dir or [args.output_dir]
+    processed_tokens = collect_processed_tokens(resume_dirs) if args.resume else set()
+    if processed_tokens:
+        selected_indices = [
+            idx for idx in selected_indices if dataset_tokens[idx] not in processed_tokens
+        ]
+
+    total_candidates = len(indices)
+    shard_total = len(partition_indices(indices, args.sample_num, args.num_parts))
+    print(
+        f"Selected {total_candidates} samples from dataset of size {len(val_dataset)}."
+    )
+    if requested_tokens is not None:
+        print(
+            f"Loaded {len(requested_tokens)} requested tokens from {args.sample_ids_json}."
+        )
+        if missing_tokens:
+            preview = ", ".join(missing_tokens[:10])
+            print(
+                f"Skipped {len(missing_tokens)} requested tokens not found in the dataset split. "
+                f"Examples: {preview}"
+            )
+    if args.sample_num != 0:
+        print(
+            f"Shard {args.sample_num}/{args.num_parts} received {shard_total} samples before resume filtering."
+        )
+    if args.resume:
+        print(
+            f"Resume mode found {len(processed_tokens)} processed tokens across {len(resume_dirs)} directories."
+        )
+        print(
+            f"Shard {args.sample_num}/{args.num_parts} will process {len(selected_indices)} remaining samples."
+        )
+
+    if not selected_indices:
+        print("No samples left to process for this shard.")
+        raise SystemExit(0)
 
     saved_count = 0
     progress = tqdm(
