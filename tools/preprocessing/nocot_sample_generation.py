@@ -24,6 +24,12 @@ def load_config(file_path):
         config = yaml.safe_load(f)
     return config
 
+def resolve_config_path(config_name):
+    candidate = os.path.expanduser(config_name)
+    if os.path.isfile(candidate):
+        return candidate
+    return f"./config/{config_name}.yaml"
+
 def process_sample(sample, dataset_name):
     """
     Process a single sample from the dataset.
@@ -115,7 +121,7 @@ if __name__ == "__main__":
             print(f"Pre_generated_dir {args.pre_generated_dir} does not exist.")
 
     # Load configuration.
-    config = load_config(f"./config/{args.config}.yaml")
+    config = load_config(resolve_config_path(args.config))
     
     # Initialize the processor and dataset.
     processor = AutoProcessor.from_pretrained(config['pretrained_model_path'], use_fast=True)

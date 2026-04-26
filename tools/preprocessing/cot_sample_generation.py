@@ -16,6 +16,13 @@ CAM_LIST = ['front', 'front_left', 'front_right',
             'back', 'back_left', 'back_right', 'left', 'right']
 
 
+def resolve_config_path(config_name):
+    candidate = os.path.expanduser(config_name)
+    if os.path.isfile(candidate):
+        return candidate
+    return f"./config/{config_name}.yaml"
+
+
 def load_config(file_path):
     with open(file_path, 'r') as file:
         config = yaml.safe_load(file)
@@ -108,7 +115,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # Load configuration
-    config = load_config(f"./config/{args.config}.yaml")
+    config = load_config(resolve_config_path(args.config))
 
     # Determine backend: CLI arg > config > default (vllm)
     backend = args.backend or config.get('annotation_backend', 'vllm')
