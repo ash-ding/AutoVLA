@@ -129,6 +129,7 @@ def ensure_lmdb(manifest: dict, manifest_uri: str, work_dir: Path, skip_download
     archive_path = work_dir / "downloads" / Path(archive_uri).name
     download_uri(archive_uri, archive_path)
     extract_tar(archive_path, work_dir / "lmdb")
+    archive_path.unlink(missing_ok=True)
     if not lmdb_dir.exists():
         raise SystemExit(f"LMDB archive did not produce {lmdb_dir}")
     return lmdb_dir
@@ -153,6 +154,7 @@ def prepare_chunk(manifest: dict, manifest_uri: str, work_dir: Path, chunk: dict
     if expected_root.exists():
         shutil.rmtree(expected_root)
     extract_tar(archive_path, extract_root)
+    archive_path.unlink(missing_ok=True)
     if not expected_root.exists():
         raise SystemExit(f"Chunk archive did not produce {expected_root}")
 
