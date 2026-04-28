@@ -5,8 +5,11 @@ channels:
 dependencies:
   - python=3.9
   - pip
-  - numpy
+  - numpy<2
   - tqdm
   - pip:
+    - --extra-index-url https://download.pytorch.org/whl/cpu
+    - torch==2.8.0+cpu
+    - opencv-python-headless==4.13.0.92
     - nuscenes-devkit==1.1.11
     - pyquaternion
