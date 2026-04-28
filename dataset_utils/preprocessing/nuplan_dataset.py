@@ -62,27 +62,8 @@ class NuplanCoTAnnotationDataset(Dataset):
         target_builder = self._agent.get_target_builders()[0]
         target_trajectory = target_builder.compute_targets(scene)
 
-        # image sensor
+        # image sensor (pixel data only loaded when processor is provided)
         images = input_features['images']
-        front_camera_1 = images['front_camera'][0].image
-        front_camera_2 = images['front_camera'][1].image
-        front_camera_3 = images['front_camera'][2].image
-        front_camera_4 = images['front_camera'][3].image
-
-        back_camera_1 = images['back_camera'][0].image
-        back_camera_2 = images['back_camera'][1].image
-        back_camera_3 = images['back_camera'][2].image
-        back_camera_4 = images['back_camera'][3].image
-
-        left_camera_1 = images['left_camera'][0].image
-        left_camera_2 = images['left_camera'][1].image
-        left_camera_3 = images['left_camera'][2].image
-        left_camera_4 = images['left_camera'][3].image
-
-        right_camera_1 = images['right_camera'][0].image
-        right_camera_2 = images['right_camera'][1].image
-        right_camera_3 = images['right_camera'][2].image
-        right_camera_4 = images['right_camera'][3].image
 
         # vehicle state
         velocity = input_features["vehicle_velocity"]
@@ -92,13 +73,13 @@ class NuplanCoTAnnotationDataset(Dataset):
 
         # his trajectory
         his_raw_trajectory = input_features["history_trajectory"]
-        
+
         # gt trajectory
         gt_trajectory = target_trajectory
-        
+
         # Extract positions and heading for action calculation
-        gt_positions_np = gt_trajectory[:, :2].numpy()  
-        his_positions = his_raw_trajectory[:, :2].numpy()  
+        gt_positions_np = gt_trajectory[:, :2].numpy()
+        his_positions = his_raw_trajectory[:, :2].numpy()
 
         his_velocity = np.diff(his_positions, axis=0) / self.interval_length
         if len(his_velocity) > 0:
@@ -106,7 +87,7 @@ class NuplanCoTAnnotationDataset(Dataset):
         else:
             his_velocity = np.zeros((1, 2))
         his_ego_action = get_action_instruction(his_positions, his_velocity)
-        
+
         # Calculate future ego action
         fut_velocity = np.diff(gt_positions_np, axis=0) / self.interval_length
         # Pad with last velocity to match trajectory length
@@ -117,113 +98,134 @@ class NuplanCoTAnnotationDataset(Dataset):
             fut_velocity = np.zeros((1, 2))
         fut_ego_action = get_action_instruction(gt_positions_np, fut_velocity)
 
-        # create messages
-        messages = [
-            {   
-                "role": "system",
-                "content": "As a professional driver, how do you drive in the following scenario."
-            },
-
-            {
-                "role": "user",
-                "content": [
-                    # sensor inputs information
-                    {
-                        "type": "text", 
-                        "text": "Four cameras are mounted on the vehicle to perceive the surrounding environment. " + \
-                                "These cameras provide the front, front left, front right, and back views. " +
-                                "The multi-view multi-frame camera images are organized in a video format. "
-                    },
-
-                    # camera images
-                    {
-                        "type": "text", 
-                        "text": "The video is from the front camera, capturing the history of the vehicle's front view from the past two seconds at 2Hz."
-                    },
-                    {
-                        "type": "video",
-                        "min_pixels": 400 * 400,
-                        "max_pixels": 400 * 400,
-                        "video": [
-                        # Front camera frames with IDs
-                            "data:image/jpeg;base64," + process_image_input(front_camera_1),
-                            "data:image/jpeg;base64," + process_image_input(front_camera_2),
-                            "data:image/jpeg;base64," + process_image_input(front_camera_3),
-                            "data:image/jpeg;base64," + process_image_input(front_camera_4),
-                        ],
-                    },
-
-                    {
-                        "type": "text", 
-                        "text": "The video is from the back camera, capturing the history of the vehicle's back view from the past two seconds at 2Hz."
-                    },
-                    {
-                        "type": "video",
-                        "min_pixels": 400 * 400,
-                        "max_pixels": 400 * 400,
-                        "video": [
-                        # Back camera frames with IDs
-                            "data:image/jpeg;base64," + process_image_input(back_camera_1),
-                            "data:image/jpeg;base64," + process_image_input(back_camera_2),
-                            "data:image/jpeg;base64," + process_image_input(back_camera_3),
-                            "data:image/jpeg;base64," + process_image_input(back_camera_4),
-                        ],
-                    },
-
-                    {
-                        "type": "text", 
-                        "text": "The video is from the left camera, capturing history of the vehicle's left view from the past two seconds at 2Hz."
-                    },
-                    {
-                        "type": "video",
-                        "min_pixels": 400 * 400,
-                        "max_pixels": 400 * 400,
-                        "video": [
-                        # Left camera frames with IDs
-                            "data:image/jpeg;base64," + process_image_input(left_camera_1),
-                            "data:image/jpeg;base64," + process_image_input(left_camera_2),
-                            "data:image/jpeg;base64," + process_image_input(left_camera_3),
-                            "data:image/jpeg;base64," + process_image_input(left_camera_4),
-                        ],
-                    },
-
-                    {
-                        "type": "text", 
-                        "text": "The video is from the right camera, capturing history of the vehicle's right view from the past two seconds at 2Hz."
-                    },
-                    {
-                        "type": "video",
-                        "min_pixels": 400 * 400,
-                        "max_pixels": 400 * 400,
-                        "video": [
-                        # Right camera frames with IDs
-                            "data:image/jpeg;base64," + process_image_input(right_camera_1),
-                            "data:image/jpeg;base64," + process_image_input(right_camera_2),
-                            "data:image/jpeg;base64," + process_image_input(right_camera_3),
-                            "data:image/jpeg;base64," + process_image_input(right_camera_4),
-                        ],
-                    },
-    
-                    # vehicle state and instruction and additional information
-                    {
-                        "type": "text", 
-                        "text": f"The ego vehicle behavior in the past 4s is **{his_ego_action}**."
-                                f"The ego vehicle's current velocity is {velocity[0]:.3f} m/s at x-direction and {velocity[1]:.3f} m/s at y-direction." + \
-                                f"The ego vehicle's current acceleration is {acceleration[0]:.3f} m/s^2 at x-direction and {acceleration[1]:.3f} m/s^2 at y-direction. " + \
-                                f"The current driving command instruction of ego vehicle is: {instruction}, indicating the intended route direction. Note that the left and right driving commands cover turns, lane changes and sharp curves driving behavior."
-                    },
-
-                    # CoT Reasoning
-                    get_cot_reasoning_prompt(fut_ego_action),
-                ]
-            },
-        ]
-
         token = self._scene_loader.tokens[idx]
-        inputs = {'messages': messages, 'token': token}
+        inputs = {'token': token}
 
-        # Qwen-specific processing (only when processor is available, i.e., vLLM backend)
+        # VLM-specific work (pixel decoding, base64 encoding, message templating, tokenization).
+        # Skipped when processor is None (no-CoT preprocessing path).
         if self.processor is not None:
+            front_camera_1 = images['front_camera'][0].image
+            front_camera_2 = images['front_camera'][1].image
+            front_camera_3 = images['front_camera'][2].image
+            front_camera_4 = images['front_camera'][3].image
+
+            back_camera_1 = images['back_camera'][0].image
+            back_camera_2 = images['back_camera'][1].image
+            back_camera_3 = images['back_camera'][2].image
+            back_camera_4 = images['back_camera'][3].image
+
+            left_camera_1 = images['left_camera'][0].image
+            left_camera_2 = images['left_camera'][1].image
+            left_camera_3 = images['left_camera'][2].image
+            left_camera_4 = images['left_camera'][3].image
+
+            right_camera_1 = images['right_camera'][0].image
+            right_camera_2 = images['right_camera'][1].image
+            right_camera_3 = images['right_camera'][2].image
+            right_camera_4 = images['right_camera'][3].image
+
+            messages = [
+                {
+                    "role": "system",
+                    "content": "As a professional driver, how do you drive in the following scenario."
+                },
+
+                {
+                    "role": "user",
+                    "content": [
+                        # sensor inputs information
+                        {
+                            "type": "text",
+                            "text": "Four cameras are mounted on the vehicle to perceive the surrounding environment. " + \
+                                    "These cameras provide the front, front left, front right, and back views. " +
+                                    "The multi-view multi-frame camera images are organized in a video format. "
+                        },
+
+                        # camera images
+                        {
+                            "type": "text",
+                            "text": "The video is from the front camera, capturing the history of the vehicle's front view from the past two seconds at 2Hz."
+                        },
+                        {
+                            "type": "video",
+                            "min_pixels": 400 * 400,
+                            "max_pixels": 400 * 400,
+                            "video": [
+                            # Front camera frames with IDs
+                                "data:image/jpeg;base64," + process_image_input(front_camera_1),
+                                "data:image/jpeg;base64," + process_image_input(front_camera_2),
+                                "data:image/jpeg;base64," + process_image_input(front_camera_3),
+                                "data:image/jpeg;base64," + process_image_input(front_camera_4),
+                            ],
+                        },
+
+                        {
+                            "type": "text",
+                            "text": "The video is from the back camera, capturing the history of the vehicle's back view from the past two seconds at 2Hz."
+                        },
+                        {
+                            "type": "video",
+                            "min_pixels": 400 * 400,
+                            "max_pixels": 400 * 400,
+                            "video": [
+                            # Back camera frames with IDs
+                                "data:image/jpeg;base64," + process_image_input(back_camera_1),
+                                "data:image/jpeg;base64," + process_image_input(back_camera_2),
+                                "data:image/jpeg;base64," + process_image_input(back_camera_3),
+                                "data:image/jpeg;base64," + process_image_input(back_camera_4),
+                            ],
+                        },
+
+                        {
+                            "type": "text",
+                            "text": "The video is from the left camera, capturing history of the vehicle's left view from the past two seconds at 2Hz."
+                        },
+                        {
+                            "type": "video",
+                            "min_pixels": 400 * 400,
+                            "max_pixels": 400 * 400,
+                            "video": [
+                            # Left camera frames with IDs
+                                "data:image/jpeg;base64," + process_image_input(left_camera_1),
+                                "data:image/jpeg;base64," + process_image_input(left_camera_2),
+                                "data:image/jpeg;base64," + process_image_input(left_camera_3),
+                                "data:image/jpeg;base64," + process_image_input(left_camera_4),
+                            ],
+                        },
+
+                        {
+                            "type": "text",
+                            "text": "The video is from the right camera, capturing history of the vehicle's right view from the past two seconds at 2Hz."
+                        },
+                        {
+                            "type": "video",
+                            "min_pixels": 400 * 400,
+                            "max_pixels": 400 * 400,
+                            "video": [
+                            # Right camera frames with IDs
+                                "data:image/jpeg;base64," + process_image_input(right_camera_1),
+                                "data:image/jpeg;base64," + process_image_input(right_camera_2),
+                                "data:image/jpeg;base64," + process_image_input(right_camera_3),
+                                "data:image/jpeg;base64," + process_image_input(right_camera_4),
+                            ],
+                        },
+
+                        # vehicle state and instruction and additional information
+                        {
+                            "type": "text",
+                            "text": f"The ego vehicle behavior in the past 4s is **{his_ego_action}**."
+                                    f"The ego vehicle's current velocity is {velocity[0]:.3f} m/s at x-direction and {velocity[1]:.3f} m/s at y-direction." + \
+                                    f"The ego vehicle's current acceleration is {acceleration[0]:.3f} m/s^2 at x-direction and {acceleration[1]:.3f} m/s^2 at y-direction. " + \
+                                    f"The current driving command instruction of ego vehicle is: {instruction}, indicating the intended route direction. Note that the left and right driving commands cover turns, lane changes and sharp curves driving behavior."
+                        },
+
+                        # CoT Reasoning
+                        get_cot_reasoning_prompt(fut_ego_action),
+                    ]
+                },
+            ]
+            inputs['messages'] = messages
+
             process_vision_kwargs = {
                 "return_video_kwargs": True,
             }
@@ -313,14 +315,15 @@ def get_action_instruction(ego_trj_trajs, ego_trj_diff):
 
 @dataclass
 class DataCollator:
-    processor: AutoProcessor
+    processor: Any = None
 
     def __call__(self, features: List[Dict[str, Any]]) -> Dict[str, torch.Tensor]:
         batch = {}
-        batch["text"] = [feature["text"] for feature in features]
-        batch["image_inputs"] = [feature["image_inputs"] for feature in features]
-        batch["video_inputs"] = [feature["video_inputs"] for feature in features]
-        batch["mm_processor_kwargs"] = [feature.get("mm_processor_kwargs", {}) for feature in features]
+        if self.processor is not None:
+            batch["text"] = [feature["text"] for feature in features]
+            batch["image_inputs"] = [feature["image_inputs"] for feature in features]
+            batch["video_inputs"] = [feature["video_inputs"] for feature in features]
+            batch["mm_processor_kwargs"] = [feature.get("mm_processor_kwargs", {}) for feature in features]
 
         batch["token"] = [feature["token"] for feature in features]
         batch["velocity"] = [feature["velocity"] for feature in features]

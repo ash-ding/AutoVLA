@@ -118,7 +118,11 @@ if __name__ == "__main__":
     config = load_config(f"./config/{args.config}.yaml")
     
     # Initialize the processor and dataset.
-    processor = AutoProcessor.from_pretrained(config['pretrained_model_path'], use_fast=True)
+    # No-CoT preprocessing does not actually need a VLM processor — output JSON only holds
+    # raw scene metadata and camera file paths. When 'pretrained_model_path' is absent from
+    # the config, pass processor=None and the dataset/collator will skip all VLM-specific work.
+    pretrained_model_path = config.get('pretrained_model_path')
+    processor = AutoProcessor.from_pretrained(pretrained_model_path, use_fast=True) if pretrained_model_path else None
     dataset_name = config.get("dataset_name", "")
 
     if dataset_name == "nuplan":
