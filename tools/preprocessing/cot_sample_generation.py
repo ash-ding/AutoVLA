@@ -116,6 +116,8 @@ if __name__ == "__main__":
 
     # Load configuration
     config = load_config(resolve_config_path(args.config))
+    if args.sample_ids_json is not None:
+        config["sample_ids_json"] = os.path.abspath(args.sample_ids_json)
 
     # Determine backend: CLI arg > config > default (vllm)
     backend = args.backend or config.get('annotation_backend', 'vllm')

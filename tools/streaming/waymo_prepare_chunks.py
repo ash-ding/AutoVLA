@@ -3,7 +3,8 @@
 
 This is the storage-box side of the workflow:
 
-  1. Read the shared LMDB to discover processable sample tokens.
+  1. Read the shared LMDB, or scan local tfrecords, to discover processable
+     sample tokens.
   2. Group samples into chunks capped by --target-extracted-gb.
   3. Scan local tfrecords once and route each required frame into its chunk.
   4. Archive each chunk as a tarball containing:
@@ -56,6 +57,7 @@ WORKER_PREPARED_DIR = None
 WORKER_SPLIT = None
 WORKER_FRAME_TOKENS = None
 WORKER_FRAME_TO_CHUNK = None
+WORKER_LMDB_TOKENS = None
 
 
 @dataclass
@@ -99,6 +101,8 @@ def parse_args():
                    help="Dataset root containing {split}_lmdb.")
     p.add_argument("--local-tfrecord-dir", type=Path, required=True,
                    help="Directory containing local Waymo tfrecords.")
+    p.add_argument("--plan-from-tfrecords", action="store_true",
+                   help="Scan local tfrecords for frame tokens instead of requiring {split}_lmdb.")
     p.add_argument("--keys-file", type=Path, default=None,
                    help="Optional S3-key list; local files are matched by basename.")
     p.add_argument("--token-to-tfrecord-json", type=Path, default=None,
@@ -120,11 +124,31 @@ def parse_args():
                    help="Parallel local tfrecord workers for measurement/extraction. Start with 4-8.")
     p.add_argument("--max-samples-per-chunk", type=int, default=None)
     p.add_argument("--max-frame-tokens-per-chunk", type=int, default=None)
+    p.add_argument("--max-chunks", type=int, default=None,
+                   help="Build only the first N planned chunks. Useful for pilot runs.")
+    p.add_argument("--early-stop-after-chunks", type=int, default=None,
+                   help=(
+                       "With --plan-from-tfrecords, stop scanning for the sample plan "
+                       "as soon as this many estimated chunks can be built. Pilot mode; "
+                       "does not produce the globally planned first chunks."
+                   ))
     p.add_argument("--archive-format", choices=["tar", "tar.gz"], default="tar")
     p.add_argument("--upload-prefix", default=None,
                    help="Optional S3 prefix like s3://bucket/path/to/chunks.")
     p.add_argument("--archive-lmdb", action="store_true",
                    help="Also archive/upload {split}_lmdb once for the cloud runner.")
+    p.add_argument("--build-scoped-lmdb", action="store_true",
+                   help=(
+                       "Build a compact {split}_lmdb containing only metadata records needed "
+                       "by the selected chunks."
+                   ))
+    p.add_argument("--output-lmdb-dir", type=Path, default=None,
+                   help=(
+                       "Where --build-scoped-lmdb writes the compact LMDB. "
+                       "Defaults to {archive_dir}/{split}_lmdb."
+                   ))
+    p.add_argument("--lmdb-map-size-gb", type=int, default=1500,
+                   help="Virtual map size for --build-scoped-lmdb; not actual disk usage.")
     p.add_argument("--dry-run", action="store_true",
                    help="Print the chunk plan and exit before extracting.")
     p.add_argument("--overwrite", action="store_true",
@@ -197,17 +221,37 @@ def init_measure_worker(local_tfrecord_dir: str, frame_tokens: Set[str]):
     WORKER_FRAME_TOKENS = frame_tokens
 
 
+def init_scan_worker(local_tfrecord_dir: str):
+    global WORKER_LOCAL_TFRECORD_DIR
+    WORKER_LOCAL_TFRECORD_DIR = Path(local_tfrecord_dir)
+
+
 def init_extract_worker(
     local_tfrecord_dir: str,
     prepared_dir: str,
     split: str,
     frame_to_chunk: Dict[str, int],
+    lmdb_tokens: Set[str] | None,
 ):
-    global WORKER_LOCAL_TFRECORD_DIR, WORKER_PREPARED_DIR, WORKER_SPLIT, WORKER_FRAME_TO_CHUNK
+    global WORKER_LOCAL_TFRECORD_DIR, WORKER_PREPARED_DIR, WORKER_SPLIT, WORKER_FRAME_TO_CHUNK, WORKER_LMDB_TOKENS
     WORKER_LOCAL_TFRECORD_DIR = Path(local_tfrecord_dir)
     WORKER_PREPARED_DIR = Path(prepared_dir)
     WORKER_SPLIT = split
     WORKER_FRAME_TO_CHUNK = frame_to_chunk
+    WORKER_LMDB_TOKENS = lmdb_tokens
+
+
+def scan_tfrecord_worker(key: str):
+    local_path = local_source_for_key(WORKER_LOCAL_TFRECORD_DIR, key)
+    tokens = []
+    token_to_tfrecord = {}
+    for raw in tf.data.TFRecordDataset(str(local_path), compression_type=""):
+        frame = wod_e2ed_pb2.E2EDFrame()
+        frame.ParseFromString(raw.numpy())
+        token = frame.frame.context.name
+        tokens.append(token)
+        token_to_tfrecord[token] = key
+    return key, tokens, token_to_tfrecord
 
 
 def measure_tfrecord_worker(key: str):
@@ -235,6 +279,7 @@ def extract_tfrecord_worker(key: str):
     found = set()
     actual_image_bytes = {}
     token_to_tfrecord = {}
+    lmdb_records = {}
     matched = 0
     for raw in tf.data.TFRecordDataset(str(local_path), compression_type=""):
         frame = wod_e2ed_pb2.E2EDFrame()
@@ -242,21 +287,27 @@ def extract_tfrecord_worker(key: str):
         token = frame.frame.context.name
         token_to_tfrecord[token] = key
         chunk_index = WORKER_FRAME_TO_CHUNK.get(token)
-        if chunk_index is None:
+        needs_lmdb = WORKER_LMDB_TOKENS is not None and token in WORKER_LMDB_TOKENS
+        if chunk_index is None and not needs_lmdb:
             continue
 
-        images_dir = (
-            WORKER_PREPARED_DIR
-            / f"chunk_{chunk_index:05d}"
-            / f"{WORKER_SPLIT}_images"
-        )
-        actual_image_bytes[chunk_index] = (
-            actual_image_bytes.get(chunk_index, 0)
-            + write_frame_images(frame, token, images_dir)
-        )
-        found.add(token)
-        matched += 1
-    return key, matched, found, actual_image_bytes, token_to_tfrecord
+        if chunk_index is not None:
+            images_dir = (
+                WORKER_PREPARED_DIR
+                / f"chunk_{chunk_index:05d}"
+                / f"{WORKER_SPLIT}_images"
+            )
+            actual_image_bytes[chunk_index] = (
+                actual_image_bytes.get(chunk_index, 0)
+                + write_frame_images(frame, token, images_dir)
+            )
+            found.add(token)
+            matched += 1
+
+        if needs_lmdb:
+            del frame.frame.images[:]
+            lmdb_records[token] = frame.SerializeToString()
+    return key, matched, found, actual_image_bytes, token_to_tfrecord, lmdb_records
 
 
 def parse_token(token: str):
@@ -304,8 +355,7 @@ def stop_frame_for_split(config: dict, max_frame: int, num_fut_frames: int) -> i
     raise ValueError(f"Invalid dataset_split '{split}'.")
 
 
-def build_sequence_plans(config: dict, lmdb_dir: Path) -> List[SequencePlan]:
-    tokens = read_lmdb_tokens(lmdb_dir)
+def build_sequence_plans_from_tokens(config: dict, tokens: Sequence[str]) -> List[SequencePlan]:
     sequence_frames = build_sequence_frames(tokens)
 
     frequency_ratio = int(config["raw_images_freq"] / config["model_freq"])
@@ -332,6 +382,91 @@ def build_sequence_plans(config: dict, lmdb_dir: Path) -> List[SequencePlan]:
         if sample_tokens:
             plans.append(SequencePlan(sequence, sample_tokens, frame_tokens))
     return plans
+
+
+def build_sequence_plans(config: dict, lmdb_dir: Path) -> List[SequencePlan]:
+    tokens = read_lmdb_tokens(lmdb_dir)
+    return build_sequence_plans_from_tokens(config, tokens)
+
+
+def scan_tfrecord_tokens(
+    args,
+    keys: Sequence[str],
+    config: dict | None = None,
+) -> tuple[List[str], Dict[str, str], List[str]]:
+    tokens = []
+    token_to_tfrecord: Dict[str, str] = {}
+    scanned_keys = []
+    effective_workers = 1 if args.early_stop_after_chunks is not None else args.num_workers
+    print(
+        f"Scanning {len(keys)} local tfrecords for frame tokens with "
+        f"{effective_workers} worker(s).",
+        flush=True,
+    )
+
+    if args.early_stop_after_chunks is not None:
+        if config is None:
+            raise ValueError("config is required for early-stop planning")
+        print(
+            f"Early-stop planning enabled: scanning until "
+            f"{args.early_stop_after_chunks} chunk(s) can be estimated.",
+            flush=True,
+        )
+        init_scan_worker(str(args.local_tfrecord_dir))
+        for i, key in enumerate(keys, 1):
+            _, partial_tokens, partial_token_map = scan_tfrecord_worker(key)
+            tokens.extend(partial_tokens)
+            token_to_tfrecord.update(partial_token_map)
+            scanned_keys.append(key)
+
+            plans = build_sequence_plans_from_tokens(config, tokens)
+            chunks = build_chunks(args, plans)
+            print(
+                f"[plan {i}/{len(keys)}] {Path(key).name}: "
+                f"+{len(partial_tokens)} tokens ({len(tokens)} total), "
+                f"{len(chunks)} candidate chunk(s)",
+                flush=True,
+            )
+            if len(chunks) >= args.early_stop_after_chunks:
+                print(
+                    f"Stopping planning after {len(scanned_keys)} tfrecord(s): "
+                    f"{len(chunks)} candidate chunk(s) available.",
+                    flush=True,
+                )
+                break
+    elif args.num_workers <= 1:
+        init_scan_worker(str(args.local_tfrecord_dir))
+        for i, key in enumerate(keys, 1):
+            _, partial_tokens, partial_token_map = scan_tfrecord_worker(key)
+            tokens.extend(partial_tokens)
+            token_to_tfrecord.update(partial_token_map)
+            scanned_keys.append(key)
+            print(
+                f"[plan {i}/{len(keys)}] {Path(key).name}: "
+                f"+{len(partial_tokens)} tokens ({len(tokens)} total)",
+                flush=True,
+            )
+    else:
+        with ProcessPoolExecutor(
+            max_workers=args.num_workers,
+            initializer=init_scan_worker,
+            initargs=(str(args.local_tfrecord_dir),),
+        ) as pool:
+            futures = {pool.submit(scan_tfrecord_worker, key): key for key in keys}
+            completed = 0
+            for fut in as_completed(futures):
+                key, partial_tokens, partial_token_map = fut.result()
+                completed += 1
+                tokens.extend(partial_tokens)
+                token_to_tfrecord.update(partial_token_map)
+                scanned_keys.append(key)
+                print(
+                    f"[plan {completed}/{len(keys)}] {Path(key).name}: "
+                    f"+{len(partial_tokens)} tokens ({len(tokens)} total)",
+                    flush=True,
+                )
+
+    return tokens, token_to_tfrecord, scanned_keys
 
 
 def estimate_bytes(frame_count: int, bytes_per_image: int) -> int:
@@ -551,70 +686,159 @@ def write_frame_images(frame, token: str, images_dir: Path) -> int:
     return written_bytes
 
 
-def extract_local_tfrecords(args, chunks: Sequence[ChunkPlan], keys: Sequence[str], split: str):
+def write_lmdb_batch(env, records: Dict[str, bytes]):
+    if not records:
+        return
+    with env.begin(write=True) as txn:
+        for token, raw_bytes in records.items():
+            txn.put(token.encode("utf-8"), raw_bytes)
+
+
+def extract_local_tfrecords(
+    args,
+    chunks: Sequence[ChunkPlan],
+    keys: Sequence[str],
+    split: str,
+    lmdb_tokens: Set[str] | None = None,
+    output_lmdb_dir: Path | None = None,
+):
     frame_to_chunk = {}
     for chunk in chunks:
         for token in chunk.frame_tokens:
             frame_to_chunk[token] = chunk.index
 
     found = set()
+    lmdb_found = set()
     actual_image_bytes = {chunk.index: 0 for chunk in chunks}
     token_to_tfrecord: Dict[str, str] = {}
     total_targets = len(frame_to_chunk)
+    lmdb_targets = lmdb_tokens or set()
+    effective_workers = 1 if args.early_stop_after_chunks is not None else args.num_workers
     print(
         f"Extracting {total_targets} required frame tokens from {len(keys)} tfrecords "
-        f"with {args.num_workers} worker(s).",
+        f"with {effective_workers} worker(s).",
         flush=True,
     )
-
-    if args.num_workers <= 1:
-        init_extract_worker(
-            str(args.local_tfrecord_dir),
-            str(args.prepared_dir),
-            split,
-            frame_to_chunk,
+    if args.early_stop_after_chunks is not None and args.num_workers > 1:
+        print(
+            "Early-stop extraction enabled: scanning tfrecords sequentially so the "
+            "run can stop as soon as the selected chunks are complete.",
+            flush=True,
         )
-        for i, key in enumerate(keys, 1):
-            _, matched, partial_found, partial_bytes, partial_token_map = extract_tfrecord_worker(key)
-            found.update(partial_found)
-            token_to_tfrecord.update(partial_token_map)
-            for chunk_index, byte_count in partial_bytes.items():
-                actual_image_bytes[chunk_index] += byte_count
-            print(
-                f"[{i}/{len(keys)}] {Path(key).name}: +{matched} frames "
-                f"({len(found)}/{total_targets})",
-                flush=True,
-            )
-    else:
-        with ProcessPoolExecutor(
-            max_workers=args.num_workers,
-            initializer=init_extract_worker,
-            initargs=(
+    if lmdb_tokens is not None:
+        print(
+            f"Writing scoped LMDB metadata for {len(lmdb_tokens)} frame tokens "
+            f"to {output_lmdb_dir}.",
+            flush=True,
+        )
+
+    lmdb_env = None
+    if output_lmdb_dir is not None:
+        import lmdb
+
+        if output_lmdb_dir.exists() and any(output_lmdb_dir.iterdir()):
+            if args.overwrite:
+                shutil.rmtree(output_lmdb_dir)
+            else:
+                raise SystemExit(
+                    f"Output LMDB directory is not empty. Pass --overwrite or choose a new path: "
+                    f"{output_lmdb_dir}"
+                )
+        output_lmdb_dir.mkdir(parents=True, exist_ok=True)
+        lmdb_env = lmdb.open(
+            str(output_lmdb_dir),
+            map_size=args.lmdb_map_size_gb * 1024 ** 3,
+        )
+
+    try:
+        if args.num_workers <= 1 or args.early_stop_after_chunks is not None:
+            init_extract_worker(
                 str(args.local_tfrecord_dir),
                 str(args.prepared_dir),
                 split,
                 frame_to_chunk,
-            ),
-        ) as pool:
-            futures = {pool.submit(extract_tfrecord_worker, key): key for key in keys}
-            completed = 0
-            for fut in as_completed(futures):
-                key, matched, partial_found, partial_bytes, partial_token_map = fut.result()
-                completed += 1
+                lmdb_tokens,
+            )
+            for i, key in enumerate(keys, 1):
+                (
+                    _,
+                    matched,
+                    partial_found,
+                    partial_bytes,
+                    partial_token_map,
+                    partial_lmdb_records,
+                ) = extract_tfrecord_worker(key)
                 found.update(partial_found)
                 token_to_tfrecord.update(partial_token_map)
                 for chunk_index, byte_count in partial_bytes.items():
                     actual_image_bytes[chunk_index] += byte_count
+                if lmdb_env is not None:
+                    write_lmdb_batch(lmdb_env, partial_lmdb_records)
+                lmdb_found.update(partial_lmdb_records)
                 print(
-                    f"[{completed}/{len(keys)}] {Path(key).name}: +{matched} frames "
+                    f"[{i}/{len(keys)}] {Path(key).name}: +{matched} frames "
                     f"({len(found)}/{total_targets})",
                     flush=True,
                 )
+                if set(frame_to_chunk).issubset(found) and lmdb_targets.issubset(lmdb_found):
+                    print(
+                        f"Stopping extraction after {i} tfrecord(s): selected chunks are complete.",
+                        flush=True,
+                    )
+                    break
+        else:
+            with ProcessPoolExecutor(
+                max_workers=args.num_workers,
+                initializer=init_extract_worker,
+                initargs=(
+                    str(args.local_tfrecord_dir),
+                    str(args.prepared_dir),
+                    split,
+                    frame_to_chunk,
+                    lmdb_tokens,
+                ),
+            ) as pool:
+                futures = {pool.submit(extract_tfrecord_worker, key): key for key in keys}
+                completed = 0
+                for fut in as_completed(futures):
+                    (
+                        key,
+                        matched,
+                        partial_found,
+                        partial_bytes,
+                        partial_token_map,
+                        partial_lmdb_records,
+                    ) = fut.result()
+                    completed += 1
+                    found.update(partial_found)
+                    token_to_tfrecord.update(partial_token_map)
+                    for chunk_index, byte_count in partial_bytes.items():
+                        actual_image_bytes[chunk_index] += byte_count
+                    if lmdb_env is not None:
+                        write_lmdb_batch(lmdb_env, partial_lmdb_records)
+                    lmdb_found.update(partial_lmdb_records)
+                    print(
+                        f"[{completed}/{len(keys)}] {Path(key).name}: +{matched} frames "
+                        f"({len(found)}/{total_targets})",
+                        flush=True,
+                    )
+    finally:
+        if lmdb_env is not None:
+            lmdb_env.sync()
+            lmdb_env.close()
 
     missing = set(frame_to_chunk) - found
     if missing:
         preview = ", ".join(sorted(missing)[:10])
         msg = f"Missing {len(missing)} requested frame tokens. Examples: {preview}"
+        if not args.allow_missing_frames:
+            raise SystemExit(msg)
+        print("WARNING:", msg, flush=True)
+
+    missing_lmdb = lmdb_targets - lmdb_found
+    if missing_lmdb:
+        preview = ", ".join(sorted(missing_lmdb)[:10])
+        msg = f"Missing {len(missing_lmdb)} requested scoped LMDB tokens. Examples: {preview}"
         if not args.allow_missing_frames:
             raise SystemExit(msg)
         print("WARNING:", msg, flush=True)
@@ -677,10 +901,28 @@ def archive_chunks(args, chunks: Sequence[ChunkPlan]):
 def maybe_archive_lmdb(args, split: str, lmdb_dir: Path):
     if not args.archive_lmdb:
         return None
+    if lmdb_dir is None:
+        raise SystemExit(
+            "No LMDB directory is available to archive. Use an existing {split}_lmdb "
+            "or pass --build-scoped-lmdb."
+        )
     archive_path = archive_path_for(args, f"{split}_lmdb")
     print(f"archive {lmdb_dir} -> {archive_path}", flush=True)
     archive_dir(lmdb_dir, archive_path, f"{split}_lmdb", args.archive_format)
     return archive_path
+
+
+def lmdb_tokens_for_chunks(config: dict, chunks: Sequence[ChunkPlan]) -> Set[str]:
+    tokens = set().union(*(chunk.frame_tokens for chunk in chunks)) if chunks else set()
+    if config["dataset_split"] == "test":
+        for chunk in chunks:
+            for sample_token in chunk.sample_tokens:
+                base, frame = parse_token(sample_token)
+                if base is None:
+                    continue
+                tokens.add(f"{base}-{frame + 35:03d}")
+                tokens.add(f"{base}-{frame + 50:03d}")
+    return tokens
 
 
 def make_manifest_ref(local_path: Path, archive_dir: Path) -> str:
@@ -712,6 +954,20 @@ def main():
     if args.token_to_tfrecord_json is None:
         args.token_to_tfrecord_json = args.dataset_path / f"{split}_token_to_tfrecord.json"
 
+    if args.early_stop_after_chunks is not None:
+        if args.early_stop_after_chunks < 1:
+            raise SystemExit("--early-stop-after-chunks must be >= 1")
+        if not args.plan_from_tfrecords:
+            raise SystemExit("--early-stop-after-chunks requires --plan-from-tfrecords")
+        if args.hard_limit:
+            raise SystemExit("--early-stop-after-chunks cannot be combined with --hard-limit")
+        if args.max_chunks is None:
+            args.max_chunks = args.early_stop_after_chunks
+        elif args.max_chunks > args.early_stop_after_chunks:
+            raise SystemExit(
+                "--max-chunks cannot be greater than --early-stop-after-chunks"
+            )
+
     if args.overwrite:
         shutil.rmtree(args.prepared_dir, ignore_errors=True)
         shutil.rmtree(args.archive_dir, ignore_errors=True)
@@ -727,10 +983,22 @@ def main():
     if not keys:
         raise SystemExit(f"No local tfrecords found in {args.local_tfrecord_dir}")
 
-    print(f"Loading sample plan from LMDB: {lmdb_dir}", flush=True)
-    sequence_plans = build_sequence_plans(config, lmdb_dir)
+    planning_token_to_tfrecord: Dict[str, str] = {}
+    planning_keys = keys
+    if args.plan_from_tfrecords:
+        print(
+            f"Loading sample plan by scanning local tfrecords: {args.local_tfrecord_dir}",
+            flush=True,
+        )
+        frame_tokens, planning_token_to_tfrecord, planning_keys = scan_tfrecord_tokens(
+            args, keys, config
+        )
+        sequence_plans = build_sequence_plans_from_tokens(config, frame_tokens)
+    else:
+        print(f"Loading sample plan from LMDB: {lmdb_dir}", flush=True)
+        sequence_plans = build_sequence_plans(config, lmdb_dir)
     size_measurement_missing = set()
-    token_to_tfrecord: Dict[str, str] = {}
+    token_to_tfrecord: Dict[str, str] = dict(planning_token_to_tfrecord)
     if args.hard_limit:
         all_required_frames = set().union(*(plan.frame_tokens for plan in sequence_plans))
         frame_sizes, size_measurement_missing, token_to_tfrecord = measure_required_frame_bytes(
@@ -739,6 +1007,16 @@ def main():
         write_token_to_tfrecord_json(args.token_to_tfrecord_json, split, keys, token_to_tfrecord)
         apply_actual_frame_sizes(sequence_plans, frame_sizes)
     chunks = build_chunks(args, sequence_plans)
+    if args.max_chunks is not None:
+        if args.max_chunks < 1:
+            raise SystemExit("--max-chunks must be >= 1")
+        total_chunks = len(chunks)
+        chunks = chunks[:args.max_chunks]
+        print(
+            f"Limiting build to first {len(chunks)} of {total_chunks} planned chunks "
+            f"(--max-chunks={args.max_chunks}).",
+            flush=True,
+        )
     print_plan(chunks, args.hard_limit)
     if args.hard_limit:
         print(f"Local tfrecords to scan twice: {len(keys)}")
@@ -748,20 +1026,46 @@ def main():
             flush=True,
         )
     else:
-        print(f"Local tfrecords to scan once: {len(keys)}")
+        if args.early_stop_after_chunks is not None:
+            print(
+                f"Local tfrecords scanned for planning: {len(planning_keys)}/{len(keys)}. "
+                "Extraction will scan only this planned prefix and stop once complete.",
+                flush=True,
+            )
+        else:
+            print(f"Local tfrecords to scan once: {len(keys)}")
 
     if args.dry_run:
         return
 
+    scoped_lmdb_dir = None
+    scoped_lmdb_tokens = None
+    if args.build_scoped_lmdb:
+        scoped_lmdb_dir = args.output_lmdb_dir or (args.archive_dir / f"{split}_lmdb")
+        scoped_lmdb_tokens = lmdb_tokens_for_chunks(config, chunks)
+
     args.archive_dir.mkdir(parents=True, exist_ok=True)
     prepare_chunk_dirs(args, chunks, split)
+    extraction_keys = planning_keys if args.early_stop_after_chunks is not None else keys
     actual_image_bytes, missing, extraction_token_to_tfrecord = extract_local_tfrecords(
-        args, chunks, keys, split
+        args,
+        chunks,
+        extraction_keys,
+        split,
+        lmdb_tokens=scoped_lmdb_tokens,
+        output_lmdb_dir=scoped_lmdb_dir,
     )
     token_to_tfrecord.update(extraction_token_to_tfrecord)
-    write_token_to_tfrecord_json(args.token_to_tfrecord_json, split, keys, token_to_tfrecord)
+    token_map_keys = extraction_keys if args.early_stop_after_chunks is not None else keys
+    write_token_to_tfrecord_json(
+        args.token_to_tfrecord_json,
+        split,
+        token_map_keys,
+        token_to_tfrecord,
+    )
     archives = archive_chunks(args, chunks)
-    lmdb_archive = maybe_archive_lmdb(args, split, lmdb_dir)
+    archive_lmdb_dir = scoped_lmdb_dir if scoped_lmdb_dir is not None else lmdb_dir
+    lmdb_archive = maybe_archive_lmdb(args, split, archive_lmdb_dir)
 
     manifest = {
         "format": "autovla_waymo_prepared_chunks_v1",

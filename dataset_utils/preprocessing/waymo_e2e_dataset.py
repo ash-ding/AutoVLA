@@ -1,4 +1,5 @@
 import os
+import json
 import cv2
 import glob
 import torch
@@ -28,6 +29,13 @@ from dataset_utils.preprocessing.cot_prompts import get_cot_reasoning_prompt
 CAM_LIST = ['front', 'front_left', 'front_right', 
             'back', 'back_left', 'back_right', 'left', 'right']
 REQUIRED_CAM_LIST = CAM_LIST
+TOKEN_LIST_KEYS = (
+    "tokens",
+    "ids",
+    "sample_ids",
+    "scene_tokens",
+    "sample_tokens",
+)
 
 
 class WaymoE2ECoTAnnotationDataset(Dataset):
@@ -354,6 +362,102 @@ class WaymoE2ECoTAnnotationDataset(Dataset):
                 paths.append(file_path)
             scene_entry[f'{cam}_camera_paths'] = paths
         return scene_entry
+
+    def _load_requested_scene_tokens(self):
+        sample_ids_json = self.config.get("sample_ids_json")
+        if not sample_ids_json:
+            return None
+
+        sample_ids_json = os.path.expanduser(sample_ids_json)
+        with open(sample_ids_json, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        if isinstance(data, list):
+            raw_tokens = data
+        elif isinstance(data, dict):
+            raw_tokens = None
+            for key in TOKEN_LIST_KEYS:
+                value = data.get(key)
+                if isinstance(value, list):
+                    raw_tokens = value
+                    break
+            if raw_tokens is None:
+                available = ", ".join(sorted(data.keys()))
+                raise ValueError(
+                    f"Could not find a token list in {sample_ids_json}. "
+                    f"Expected one of {TOKEN_LIST_KEYS}; found keys: {available}"
+                )
+        else:
+            raise ValueError(
+                f"Unsupported token list format in {sample_ids_json}: "
+                f"{type(data).__name__}"
+            )
+
+        tokens = []
+        seen = set()
+        for item in raw_tokens:
+            if isinstance(item, dict):
+                candidate = None
+                for key in ("token", "id", "sample_id", "scene_token"):
+                    if key in item:
+                        candidate = item[key]
+                        break
+                if candidate is None:
+                    raise ValueError(
+                        "Token entries stored as objects must contain one of "
+                        "'token', 'id', 'sample_id', or 'scene_token'."
+                    )
+            else:
+                candidate = item
+
+            token = str(candidate)
+            if token not in seen:
+                seen.add(token)
+                tokens.append(token)
+
+        return tokens
+
+    def _frame_sequence_for_current(self, current_frame):
+        frequency_ratio = int(self.config['raw_images_freq'] / self.config['model_freq'])
+        num_history_frames = frequency_ratio * (self.config['model_his_frames'] - 1) + 1
+        return [
+            current_frame - m
+            for m in range(num_history_frames - 1, -1, -frequency_ratio)
+        ]
+
+    def _scene_loader_from_requested_tokens(self, images_path, requested_tokens):
+        scenes = {}
+        invalid_tokens = []
+        missing_tokens = []
+
+        for token in requested_tokens:
+            try:
+                sequence_name, frame_str = token.rsplit("-", 1)
+                current_frame = int(frame_str)
+            except ValueError:
+                invalid_tokens.append(token)
+                continue
+
+            sequence_dir = os.path.join(images_path, sequence_name)
+            if not os.path.isdir(sequence_dir):
+                missing_tokens.append(token)
+                continue
+
+            frame_sequence = self._frame_sequence_for_current(current_frame)
+            entry = self._make_scene_entry(sequence_name, sequence_dir, frame_sequence)
+            if entry:
+                scenes[token] = entry
+            else:
+                missing_tokens.append(token)
+
+        if invalid_tokens:
+            preview = ", ".join(invalid_tokens[:10])
+            print(f"Skipped {len(invalid_tokens)} malformed requested Waymo tokens. Examples: {preview}")
+        if missing_tokens:
+            preview = ", ".join(missing_tokens[:10])
+            print(f"Skipped {len(missing_tokens)} requested Waymo tokens with missing images. Examples: {preview}")
+
+        return list(scenes.items())
     
     def scene_loader(self):
         split = self.split
@@ -363,6 +467,10 @@ class WaymoE2ECoTAnnotationDataset(Dataset):
         
         # Build the path to the images folder
         images_path = os.path.join(self.config['dataset_path'], split + '_images')
+
+        requested_tokens = self._load_requested_scene_tokens()
+        if requested_tokens is not None:
+            return self._scene_loader_from_requested_tokens(images_path, requested_tokens)
 
         frequency_ratio = int(self.config['raw_images_freq'] / (self.config['model_freq']))
         num_history_frames = frequency_ratio * (self.config['model_his_frames'] - 1) + 1 
