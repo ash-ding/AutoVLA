@@ -7,6 +7,46 @@ from tqdm import tqdm
 from pytorch_lightning import seed_everything
 from transformers import AutoProcessor
 from torch.utils.data import DataLoader, Subset
+
+# Monkey-patch navsim's Cameras.from_camera_dict to skip JPEG decoding for the
+# no-CoT path. The original eagerly calls np.array(Image.open(image_path)) for
+# all 8 cameras × 4 history frames per sample (~1s of pure waste per item),
+# but no-CoT output only needs camera_path. Patch must be installed before the
+# first import of NuplanCoTAnnotationDataset, since SceneLoader caches the
+# class reference indirectly.
+from navsim.common.dataclasses import Camera, Cameras
+
+
+def _from_camera_dict_no_decode(cls, sensor_blobs_path, camera_dict, sensor_names):
+    data_dict = {}
+    for camera_name in camera_dict.keys():
+        camera_identifier = camera_name.lower()
+        if camera_identifier in sensor_names:
+            image_path = sensor_blobs_path / camera_dict[camera_name]["data_path"]
+            data_dict[camera_identifier] = Camera(
+                image=None,
+                sensor2lidar_rotation=camera_dict[camera_name]["sensor2lidar_rotation"],
+                sensor2lidar_translation=camera_dict[camera_name]["sensor2lidar_translation"],
+                intrinsics=camera_dict[camera_name]["cam_intrinsic"],
+                distortion=camera_dict[camera_name]["distortion"],
+                camera_path=str(image_path),
+            )
+        else:
+            data_dict[camera_identifier] = Camera()
+    return cls(
+        cam_f0=data_dict["cam_f0"],
+        cam_l0=data_dict["cam_l0"],
+        cam_l1=data_dict["cam_l1"],
+        cam_l2=data_dict["cam_l2"],
+        cam_r0=data_dict["cam_r0"],
+        cam_r1=data_dict["cam_r1"],
+        cam_r2=data_dict["cam_r2"],
+        cam_b0=data_dict["cam_b0"],
+    )
+
+
+Cameras.from_camera_dict = classmethod(_from_camera_dict_no_decode)
+
 from dataset_utils.preprocessing.nuplan_dataset import NuplanCoTAnnotationDataset, DataCollator as NuplanDataCollator
 from tools.preprocessing.sample_selection_utils import (
     collect_processed_tokens,
@@ -23,12 +63,6 @@ def load_config(file_path):
     with open(file_path, "r", encoding="utf-8") as f:
         config = yaml.safe_load(f)
     return config
-
-def resolve_config_path(config_name):
-    candidate = os.path.expanduser(config_name)
-    if os.path.isfile(candidate):
-        return candidate
-    return f"./config/{config_name}.yaml"
 
 def process_sample(sample, dataset_name):
     """
@@ -121,9 +155,7 @@ if __name__ == "__main__":
             print(f"Pre_generated_dir {args.pre_generated_dir} does not exist.")
 
     # Load configuration.
-    config = load_config(resolve_config_path(args.config))
-    if args.sample_ids_json is not None:
-        config["sample_ids_json"] = os.path.abspath(args.sample_ids_json)
+    config = load_config(f"./config/{args.config}.yaml")
     
     # Initialize the processor and dataset.
     # No-CoT preprocessing does not actually need a VLM processor — output JSON only holds
