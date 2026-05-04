@@ -8,5 +8,5 @@ batch_size: 1
 num_workers: 8
 
 dataset_name: nuplan
-dataset_path: /dataset/nuPlan/trainval_placeholder/trainval
+dataset_path: /data/nuPlan/trainval_placeholder/trainval
 scene_filter: /root/code/AutoVLA/navsim/navsim/planning/script/config/common/train_test_split/scene_filter/all_scenes.yaml

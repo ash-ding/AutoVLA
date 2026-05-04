@@ -1,8 +1,8 @@
-name: qwen2.5-vl-3B-nuplan-cot-10k-sft
-description: AutoVLA Qwen2.5-VL 3B SFT on local nuPlan CoT 10k bundle
+name: qwen2.5-vl-3B-mix-sft-10k-action-only
+description: AutoVLA Qwen2.5-VL 3B SFT on nuPlan + nuScenes 10k mix, action-only supervision (CoT samples downgraded to action-only).
 
 model:
-  use_cot: true
+  use_cot: false
   pretrained_model_path: model_weights/Qwen2.5-VL-3B-Instruct
   train_vision_backbone: false
   train_lm_backbone: true
@@ -34,13 +34,19 @@ training:
 data:
   train:
     json_dataset_path:
-      - /home/labmanger/autovla_slim/nuplan_cot_10k/json/nuPlan_cot
+      - /data/nuplan_nuscenes_train_mix_10k/nuPlan/action_only_samples_6512
+      - /data/nuplan_nuscenes_train_mix_10k/nuPlan/nl_reasoning_samples_Qwen2.4_VL_72B_Instruct_AWQ_2461
+      - /data/nuplan_nuscenes_train_mix_10k/nuScenes/action_only_samples_871
+      - /data/nuplan_nuscenes_train_mix_10k/nuScenes/nl_reasoning_samples_156
     sensor_data_path:
-      - /home/labmanger/autovla_slim/nuplan_cot_10k/sensor_blobs/trainval
+      - /data/nuPlan/trainval_sensor_blobs/trainval
+      - /data/nuPlan/trainval_sensor_blobs/trainval
+      - /data/nuScenes
+      - /data/nuScenes
 
   val:
-    json_dataset_path: /home/labmanger/autovla_slim/nuplan_cot_10k/json/nuPlan_cot_val500
-    sensor_data_path: /home/labmanger/autovla_slim/nuplan_cot_10k/sensor_blobs/trainval
+    json_dataset_path: /data/nuscenes_test/test_samples_5569
+    sensor_data_path: /data/nuScenes
 
 inference:
   batch_size: 1

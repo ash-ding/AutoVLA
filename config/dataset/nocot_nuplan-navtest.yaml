@@ -1,0 +1,12 @@
+name: nocot-nuplan-navtest
+description: No-CoT preprocessing for the NAVSIM navtest split (136 nuPlan test logs, ~12k tokens). Output JSON contains per-sample camera paths + GT trajectory + ego state; no CoT reasoning.
+
+# No 'pretrained_model_path' — no-CoT output is model-agnostic.
+batch_size: 1
+num_workers: 8
+
+dataset_name: nuplan
+# 'placeholder' is replaced with 'navsim_logs' / 'sensor_blobs' at runtime by nuplan_dataset.py.
+# Final paths: /data/nuPlan/test_navsim_logs/test/<log>.pkl, /data/nuPlan/test_sensor_blobs/test/<log>/<cam>/<jpg>
+dataset_path: /data/nuPlan/test_placeholder/test
+scene_filter: /root/code/AutoVLA/navsim/navsim/planning/script/config/common/train_test_split/scene_filter/navtest.yaml
