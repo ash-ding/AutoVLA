@@ -74,7 +74,7 @@ class ActionTokenizer:
                 action_token_ids.append(int(action.split('_')[1].replace('>', '')))
         
         # print(action_token_ids)
-        action_token_ids = torch.tensor(action_token_ids)
+        action_token_ids = torch.tensor(action_token_ids, dtype=torch.long)
 
         try:
             action_tokens = self.code_book[action_token_ids]

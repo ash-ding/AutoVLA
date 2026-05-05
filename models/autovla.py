@@ -549,6 +549,7 @@ class AutoVLA(torch.nn.Module):
 
         self.video_conf = config['model']['video']
         self.action_start_id = config['model']['tokens']['action_start_id']
+        self.num_poses = config['model']['trajectory']['num_poses']
 
         self.use_cot = config['model']['use_cot']
         self.gen_conf = config['inference']['sample']
@@ -580,7 +581,20 @@ class AutoVLA(torch.nn.Module):
         #     print("no cot")
         actions_tokens = outputs_trimmed[outputs_trimmed >= self.action_start_id]
 
-        trajectory = self.action_tokenizer.decode_token_ids_to_trajectory(actions_tokens)[0, 1:]
+        if len(actions_tokens) > self.num_poses:
+            actions_tokens = actions_tokens[:self.num_poses]
+        elif len(actions_tokens) < self.num_poses:
+            pad = torch.zeros(
+                self.num_poses - len(actions_tokens),
+                dtype=actions_tokens.dtype,
+                device=actions_tokens.device,
+            )
+            actions_tokens = torch.cat([actions_tokens, pad]).long()
+
+        trajectory = self.action_tokenizer.decode_token_ids_to_trajectory(actions_tokens)
+        if isinstance(trajectory, list):
+            trajectory = torch.zeros((self.num_poses + 1, 3), dtype=torch.float32)
+        trajectory = trajectory[0, 1:]
 
         return trajectory, cot_results
     

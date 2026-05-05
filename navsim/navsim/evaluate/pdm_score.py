@@ -101,8 +101,6 @@ def pdm_score(
     pdm_trajectory = metric_cache.trajectory
     pred_trajectory = transform_trajectory(model_trajectory, initial_ego_state)
 
-    from models.autovla import ForkedPdb; ForkedPdb().set_trace()
-
     # Interpolate both trajectories onto a uniform time grid (40 poses @ 10Hz = 4s)
     # Output shape: (num_poses, state_dim) for each
     pdm_states, pred_states = (
