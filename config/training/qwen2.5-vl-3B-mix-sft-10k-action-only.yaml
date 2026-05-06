@@ -22,11 +22,11 @@ model:
 training:
   batch_size: 1
   learning_rate: 2.0e-5
-  epochs: 1
-  num_workers: 2
+  epochs: 5
+  num_workers: 4
   weight_decay: 0.01
-  lr_warmup_step: 100
-  lr_step_frequency: 1000
+  lr_warmup_step: 500
+  lr_step_frequency: 2000
   lr_step_gamma: 0.98
   train_sample_size: null
   accumulate_grad_batches: 4

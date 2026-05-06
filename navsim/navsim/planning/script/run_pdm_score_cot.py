@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Union, Tuple
+from typing import Any, Dict, List, Union
 from pathlib import Path
 from dataclasses import asdict
 from datetime import datetime
@@ -17,7 +17,8 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 from nuplan.planning.script.builders.logging_builder import build_logger
-from nuplan.planning.utils.multithreading.worker_utils import worker_map
+from nuplan.planning.utils.multithreading.worker_pool import Task
+from nuplan.planning.utils.multithreading.worker_utils import chunk_list
 
 from navsim.agents.abstract_agent import AbstractAgent
 from navsim.common.dataloader import SceneLoader, SceneFilter, MetricCacheLoader
@@ -33,6 +34,20 @@ logger = logging.getLogger(__name__)
 
 CONFIG_PATH = "config/pdm_scoring"
 CONFIG_NAME = "default_run_pdm_score"
+
+
+def resolve_metric_cache_path(metric_cache_path: Union[str, Path], cache_root: Union[str, Path]) -> Path:
+    """Resolve stale absolute metric-cache paths against the configured cache root."""
+    metric_cache_path = Path(metric_cache_path)
+    if metric_cache_path.exists():
+        return metric_cache_path
+
+    # Metric cache layout is <cache_root>/<log_name>/unknown/<token>/metric_cache.pkl.
+    candidate = Path(cache_root).joinpath(*metric_cache_path.parts[-4:])
+    if candidate.exists():
+        return candidate
+
+    return metric_cache_path
 
 
 def run_pdm_score(args: List[Dict[str, Union[List[str], DictConfig]]]) -> List[Dict[str, Any]]:
@@ -75,7 +90,10 @@ def run_pdm_score(args: List[Dict[str, Union[List[str], DictConfig]]]) -> List[D
         )
         score_row: Dict[str, Any] = {"token": token, "valid": True}
         try:
-            metric_cache_path = metric_cache_loader.metric_cache_paths[token]
+            metric_cache_path = resolve_metric_cache_path(
+                metric_cache_loader.metric_cache_paths[token],
+                cfg.metric_cache_path,
+            )
             with lzma.open(metric_cache_path, "rb") as f:
                 metric_cache: MetricCache = pickle.load(f)
             # load input
@@ -155,7 +173,16 @@ def main(cfg: DictConfig) -> None:
         }
         for log_file, tokens_list in scene_loader.get_tokens_list_per_log().items()
     ]
-    score_rows: List[Tuple[Dict[str, Any], int, int]] = worker_map(worker, run_pdm_score, data_points)
+    num_eval_workers = cfg.get("num_eval_workers", None)
+    num_eval_workers = int(num_eval_workers) if num_eval_workers is not None else worker.number_of_threads
+    gpus_per_eval_worker = cfg.get("gpus_per_eval_worker", None)
+
+    data_chunks = chunk_list(data_points, num_eval_workers)
+    score_rows_nested: List[List[Dict[str, Any]]] = worker.map(
+        Task(fn=run_pdm_score, num_gpus=gpus_per_eval_worker),
+        data_chunks,
+    )
+    score_rows: List[Dict[str, Any]] = [row for rows in score_rows_nested for row in rows]
 
     pdm_score_df = pd.DataFrame(score_rows)
     num_sucessful_scenarios = pdm_score_df["valid"].sum()
