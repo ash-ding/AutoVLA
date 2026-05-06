@@ -23,6 +23,8 @@ temp/*
 
 # claude
 .claude/
+CLAUDE.md
+CLAUDE.vessl.md
 
 # proposals/papers
 *.pdf
