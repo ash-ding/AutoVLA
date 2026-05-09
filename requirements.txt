@@ -1,7 +1,10 @@
-# Core inference stack aligned with vLLM 0.17.1.
-torch==2.10.0
-torchvision==0.25.0
-torchaudio==2.10.0
+# cu128 wheel index for torch family
+--extra-index-url https://download.pytorch.org/whl/cu128
+
+# Core inference stack aligned with vLLM 0.17.1 + cu128 driver-forward-compat.
+torch==2.10.0+cu128
+torchvision==0.25.0+cu128
+torchaudio==2.10.0+cu128
 triton==3.6.0
 transformers==4.57.6
 transformers-stream-generator==0.0.4
@@ -18,6 +21,8 @@ lightning-utilities==0.14.2
 torchmetrics==1.7.0
 tensorboard==2.20.0
 tensorboard-data-server==0.7.2
+
+# nuPlan / NAVSIM stack
 nuplan-devkit @ git+https://github.com/motional/nuplan-devkit@nuplan-devkit-v1.2
 casadi==3.6.7
 control==0.9.1
@@ -32,11 +37,13 @@ pyproj==3.6.1
 rtree==1.4.0
 affine==2.4.0
 snuggs==1.4.7
+
+# Vision / data
 opencv-python-headless==4.13.0.92
 pillow==12.0.0
 timm==1.0.15
 av==14.2.0
-numpy==2.2.6
+numpy==1.24.3
 pandas
 scipy==1.15.3
 scikit-learn==1.7.2
@@ -47,12 +54,16 @@ datasets==3.6.0
 huggingface-hub==0.36.2
 pyarrow
 lmdb==1.7.5
+
+# Distributed / cloud
 ray==2.54.1
 aioboto3==14.1.0
 aiobotocore==2.21.1
 boto3==1.37.1
 botocore==1.37.1
 s3transfer==0.11.3
+
+# Config / eval / utils
 hydra-core==1.2.0
 omegaconf==2.3.0
 lm-eval==0.4.9.1
@@ -78,6 +89,8 @@ jsonlines==4.0.0
 portalocker==3.2.0
 rootpath==0.1.1
 sqlitedict==2.1.0
+
+# Async / IO
 aiofiles==23.2.1
 aiohttp==3.13.3
 aioitertools==0.12.0
@@ -87,6 +100,8 @@ frozenlist==1.5.0
 multidict==6.2.0
 propcache==0.3.1
 yarl==1.18.3
+
+# Misc
 sqlalchemy==1.4.27
 msgpack==1.1.0
 dill==0.3.8
@@ -98,8 +113,13 @@ guppy3==3.1.2
 matplotlib
 networkx==3.2.1
 positional-encodings==6.0.1
-protobuf==6.33.6
+protobuf==5.29.6
 setuptools
 sympy==1.14.0
+
+# nuplan import-time dep (missing from upstream requirements.txt)
+pytest
+
+# LLM API clients (used by OpenAI CoT backend etc.)
 openai==2.24.0
 anthropic==0.94.1
