@@ -7,7 +7,7 @@ import numpy as np
 from torch.utils.data import Dataset
 from transformers import AutoProcessor
 from qwen_vl_utils import process_vision_info
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Dict, List
 from pathlib import Path
 from omegaconf import OmegaConf
@@ -39,12 +39,20 @@ class NuplanCoTAnnotationDataset(Dataset):
         self.interval_length = 0.5
         trajectory_sampling = TrajectorySampling(time_horizon=5, interval_length=self.interval_length)
         self._agent = VlaAgent(trajectory_sampling=trajectory_sampling)
-        
+
+        # When no processor is provided (no-CoT preprocessing) we only need camera
+        # paths/intrinsics — skip the per-frame JPEG decode that would otherwise run
+        # for every enabled camera in Cameras.from_camera_dict.
+        sensor_config = replace(
+            self._agent.get_sensor_config(),
+            decode_images=(processor is not None),
+        )
+
         self._scene_loader = SceneLoader(
             data_path=Path(self.data_path.replace('placeholder', 'navsim_logs')),
             sensor_blobs_path=Path(self.data_path.replace('placeholder', 'sensor_blobs')),
             scene_filter=scene_filter,
-            sensor_config=self._agent.get_sensor_config(),
+            sensor_config=sensor_config,
         )
 
         print(f"Extracted {len(self._scene_loader.tokens)} scenarios")

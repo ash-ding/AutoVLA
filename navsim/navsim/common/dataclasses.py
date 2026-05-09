@@ -61,12 +61,16 @@ class Cameras:
         sensor_blobs_path: Path,
         camera_dict: Dict[str, Any],
         sensor_names: List[str],
+        decode_images: bool = True,
     ) -> Cameras:
         """
         Load camera dataclass from dictionary.
         :param sensor_blobs_path: root directory of sensor data.
         :param camera_dict: dictionary containing camera specifications.
         :param sensor_names: list of camera identifiers to include.
+        :param decode_images: when False, populate camera_path/intrinsics/extrinsics
+            but skip the JPEG decode (image stays None). Useful for metadata-only
+            preprocessing pipelines.
         :return: Cameras dataclass.
         """
 
@@ -76,7 +80,7 @@ class Cameras:
             if camera_identifier in sensor_names:
                 image_path = sensor_blobs_path / camera_dict[camera_name]["data_path"]
                 data_dict[camera_identifier] = Camera(
-                    image=np.array(Image.open(image_path)),
+                    image=np.array(Image.open(image_path)) if decode_images else None,
                     sensor2lidar_rotation=camera_dict[camera_name]["sensor2lidar_rotation"],
                     sensor2lidar_translation=camera_dict[camera_name]["sensor2lidar_translation"],
                     intrinsics=camera_dict[camera_name]["cam_intrinsic"],
@@ -203,6 +207,7 @@ class AgentInput:
                     sensor_blobs_path=sensor_blobs_path,
                     camera_dict=scene_dict_list[frame_idx]["cams"],
                     sensor_names=sensor_names,
+                    decode_images=sensor_config.decode_images,
                 )
             )
 
@@ -443,6 +448,7 @@ class Scene:
                 sensor_blobs_path=sensor_blobs_path,
                 camera_dict=scene_dict_list[frame_idx]["cams"],
                 sensor_names=sensor_names,
+                decode_images=sensor_config.decode_images,
             )
 
             lidar = Lidar.from_paths(
@@ -513,6 +519,9 @@ class SensorConfig:
     cam_r2: Union[bool, List[int]]
     cam_b0: Union[bool, List[int]]
     lidar_pc: Union[bool, List[int]]
+    # When False, camera frames load metadata (camera_path, intrinsics, extrinsics)
+    # but skip the JPEG decode. Required for metadata-only preprocessing paths.
+    decode_images: bool = True
 
     def get_sensors_at_iteration(self, iteration: int) -> List[str]:
         """
@@ -522,6 +531,8 @@ class SensorConfig:
         """
         sensors_at_iteration: List[str] = []
         for sensor_name, sensor_include in asdict(self).items():
+            if sensor_name == "decode_images":
+                continue
             if isinstance(sensor_include, bool) and sensor_include:
                 sensors_at_iteration.append(sensor_name)
             elif isinstance(sensor_include, list) and iteration in sensor_include:
@@ -529,10 +540,15 @@ class SensorConfig:
         return sensors_at_iteration
 
     @classmethod
-    def build_all_sensors(cls, include: Union[bool, List[int]] = True) -> SensorConfig:
+    def build_all_sensors(
+        cls,
+        include: Union[bool, List[int]] = True,
+        decode_images: bool = True,
+    ) -> SensorConfig:
         """
         Classmethod to load all sensors with the same specification.
         :param include: boolean or integers for sensors to include, defaults to True
+        :param decode_images: whether camera loading should decode JPEG pixels.
         :return: sensor configuration dataclass
         """
         return SensorConfig(
@@ -545,6 +561,7 @@ class SensorConfig:
             cam_r2=include,
             cam_b0=include,
             lidar_pc=include,
+            decode_images=decode_images,
         )
 
     @classmethod
