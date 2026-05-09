@@ -58,10 +58,12 @@ already on `/data`.
 ├── nuplan_test/test_samples_<N>/                                  # produced by prepare_test
 ├── nuscenes_test/test_samples_<N>/                                # produced by prepare_test
 ├── nuPlan/
-│   ├── trainval_navsim_logs/trainval/<log>.pkl                    # train pkls
-│   ├── trainval_sensor_blobs/trainval/<log>/CAM_*/<jpg>.jpg       # train jpgs
-│   ├── test_navsim_logs/test/<log>.pkl                            # test pkls
-│   ├── test_sensor_blobs/test/<log>/CAM_*/<jpg>.jpg               # test jpgs
+│   ├── navsim_logs/
+│   │   ├── trainval/<log>.pkl                                     # train pkls
+│   │   └── test/<log>.pkl                                         # test pkls
+│   ├── sensor_blobs/
+│   │   ├── trainval/<log>/CAM_*/<jpg>.jpg                         # train jpgs
+│   │   └── test/<log>/CAM_*/<jpg>.jpg                             # test jpgs
 │   └── maps/                                                      # static, not touched by these scripts
 └── nuScenes/
     ├── samples/CAM_*/<jpg>.jpg                                    # train + val jpgs share this dir
@@ -102,7 +104,7 @@ Extract one of the 4 scaling bundles into `/data/nuplan_nuscenes_train_mix_<scal
 
 1. **Phase 1** — extract the 4 sample-JSON tarballs (parallel) into the per-scale workspace.
 2. **Phase 2** — walk extracted JSONs to collect needed `<jpg>` and `<pkl>` paths.
-3. **Phase 3** — selectively extract nuPlan jpgs (200 cam tarballs) + pkls (1 metadata tarball) into `/data/nuPlan/trainval_*`.
+3. **Phase 3** — selectively extract nuPlan jpgs (200 cam tarballs) + pkls (1 metadata tarball) into `/data/nuPlan/{sensor_blobs,navsim_logs}/trainval/`.
 4. **Phase 4** — selectively extract nuScenes jpgs (10 trainval blobs + 1 meta tarball) into `/data/nuScenes/`.
 
 ### Typical commands
@@ -185,7 +187,7 @@ and the script's only job is data movement.
 1. **Phase 1** — extract the sample-JSON tarball into `/data/<ds>_test/test_samples_<N>/`.
 2. **Phase 2** — walk JSONs to collect needed jpg paths (and per-log pkl paths for nuPlan).
 3. **Phase 3** — selectively extract raw files into the canonical `/data` layout:
-   - **nuPlan**: 32 `openscene_sensor_test_camera_*.tgz` → `/data/nuPlan/test_sensor_blobs/test/`. Plus `openscene_metadata_test.tgz` → `/data/nuPlan/test_navsim_logs/test/`.
+   - **nuPlan**: 32 `openscene_sensor_test_camera_*.tgz` → `/data/nuPlan/sensor_blobs/test/`. Plus `openscene_metadata_test.tgz` → `/data/nuPlan/navsim_logs/test/`.
    - **nuScenes**: 10 `v1.0-trainval[0-9]*_blobs.tgz` → `/data/nuScenes/samples/CAM_*/` (val frames live in trainval blobs). Plus `v1.0-trainval_meta.tgz` → `/data/nuScenes/v1.0-trainval/`.
 
 ### Typical commands
@@ -224,8 +226,9 @@ disk. Same average sizes as above.
 | nuPlan test (navtest, 12,146 samples) | 53,616 (~11 GB) | 136 (~1 GB) | 66 MB | **~13 GB** |
 | nuScenes test (val, 5,569 samples)    | 18,057 (~2.8 GB) | — | 23 MB | **~3 GB** |
 
-The nuPlan test and train sets live in **separate** roots
-(`test_sensor_blobs/` vs `trainval_sensor_blobs/`) — no sharing. The
+The nuPlan test and train sets share the same `sensor_blobs/` and
+`navsim_logs/` roots but live in disjoint `test/` vs `trainval/` subdirs —
+no file sharing between splits. The
 nuScenes val frames live in `samples/CAM_*/` alongside train frames; if
 the train workspace is already hydrated, **most val jpgs are free**
 (verified on our run: 0 missing → ~3 GB still extracted because val

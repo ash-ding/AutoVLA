@@ -6,8 +6,8 @@ For a chosen scale (10k/50k/100k/185k) and CoT model (e.g. Qwen2.4_VL_72B_Instru
      into /data/nuplan_nuscenes_train_mix_<scale>/{nuPlan,nuScenes}/
   2. Walk those JSONs to build the set of raw image paths actually referenced.
   3. Stream-extract raw nuPlan from /backup/raw_dataset_tarball/nuplan/ into the
-     shared /data/nuPlan/{trainval_navsim_logs,trainval_sensor_blobs}/, keeping
-     only files in the needed set that don't already exist on disk.
+     shared /data/nuPlan/{navsim_logs,sensor_blobs}/trainval/, keeping only files
+     in the needed set that don't already exist on disk.
   4. Same for nuScenes (only samples/CAM_<6>, plus v1.0-trainval/ + maps/).
 
 Camera pruning is "level 3": only the 3 cameras SFTDataset actually reads (front,
@@ -169,10 +169,16 @@ def extract_sample_tarball(tarball: Path, target_subdir: Path, dataset_prefix: s
 
 def collect_needed_raw_paths(workspace: Path):
     """Walk the per-scale workspace JSONs, return:
-      - nuplan_jpgs: set of absolute jpg paths under /data/nuPlan/trainval_sensor_blobs/
-      - nuplan_pkls: set of absolute pkl paths under /data/nuPlan/trainval_navsim_logs/
+      - nuplan_jpgs: set of absolute jpg paths under /data/nuPlan/sensor_blobs/trainval/
+      - nuplan_pkls: set of absolute pkl paths under /data/nuPlan/navsim_logs/trainval/
       - nusc_jpgs:   set of absolute jpg paths under /data/nuScenes/samples/
-    Each set is restricted to the 3 cameras SFTDataset actually consumes."""
+    Each set is restricted to the 3 cameras SFTDataset actually consumes.
+
+    JSON paths produced by the upstream pipeline use the legacy
+    `/data/nuPlan/trainval_sensor_blobs/trainval/...` form; we translate them
+    in-memory to the unified `/data/nuPlan/sensor_blobs/trainval/...` form so
+    the in-memory set matches the destinations used by extract_raw_nuplan()
+    below. Idempotent for JSONs that already use the new layout."""
     nuplan_jpgs = set()
     nuplan_scenes = set()
     nusc_jpgs = set()
@@ -184,11 +190,12 @@ def collect_needed_raw_paths(workspace: Path):
             for p in d.get(field) or []:
                 if not isinstance(p, str):
                     continue
-                nuplan_jpgs.add(p)
-                # /data/nuPlan/trainval_sensor_blobs/trainval/<scene>/CAM_*/<jpg>.jpg
-                parts = p.split("/")
+                p_new = p.replace("/trainval_sensor_blobs/", "/sensor_blobs/")
+                nuplan_jpgs.add(p_new)
+                # /data/nuPlan/sensor_blobs/trainval/<scene>/CAM_*/<jpg>.jpg
+                parts = p_new.split("/")
                 try:
-                    i = parts.index("trainval_sensor_blobs")
+                    i = parts.index("sensor_blobs")
                     nuplan_scenes.add(parts[i + 2])  # skip "trainval/"
                 except (ValueError, IndexError):
                     pass
@@ -203,17 +210,22 @@ def collect_needed_raw_paths(workspace: Path):
                 nusc_jpgs.add(p)
 
     nuplan_pkls = {
-        str(NUPLAN_RAW / "trainval_navsim_logs" / "trainval" / f"{s}.pkl")
+        str(NUPLAN_RAW / "navsim_logs" / "trainval" / f"{s}.pkl")
         for s in nuplan_scenes
     }
     return nuplan_jpgs, nuplan_pkls, nusc_jpgs, nuplan_scenes
 
 
 def extract_raw_nuplan(jpgs: set, pkls: set, parallelism: int):
+    # openscene tarballs are already nested by split internally:
+    #   sensor: openscene-v1.1/sensor_blobs/trainval/<scene>/...
+    #   meta:   openscene-v1.1/meta_datas/trainval/<log>.pkl
+    # so stripping just the openscene prefix lands files in the unified
+    # /data/nuPlan/{sensor_blobs,navsim_logs}/trainval/... layout.
     sensor_strip = "openscene-v1.1/sensor_blobs/"
-    sensor_dest = NUPLAN_RAW / "trainval_sensor_blobs"
+    sensor_dest = NUPLAN_RAW / "sensor_blobs"
     meta_strip = "openscene-v1.1/meta_datas/"
-    meta_dest = NUPLAN_RAW / "trainval_navsim_logs"
+    meta_dest = NUPLAN_RAW / "navsim_logs"
 
     def jpg_predicate(name):
         return name.startswith(sensor_strip) and name.endswith(".jpg")

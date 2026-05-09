@@ -47,10 +47,11 @@ DATA_ROOT             = Path("/data")
 NUPLAN_TEST_WORKSPACE = DATA_ROOT / "nuplan_test"
 NUSC_TEST_WORKSPACE   = DATA_ROOT / "nuscenes_test"
 
-# nuPlan test raw lives under its own root, mirroring the trainval naming
-# convention so config 'placeholder' substitution still works.
-NUPLAN_TEST_LOGS    = DATA_ROOT / "nuPlan" / "test_navsim_logs"
-NUPLAN_TEST_SENSORS = DATA_ROOT / "nuPlan" / "test_sensor_blobs"
+# nuPlan test raw lives under the unified /data/nuPlan/{navsim_logs,sensor_blobs}/
+# trees, distinguished by the "test/" subdir. Config 'placeholder' substitution
+# of the form .../nuPlan/placeholder/test then yields the right paths.
+NUPLAN_TEST_LOGS    = DATA_ROOT / "nuPlan" / "navsim_logs"
+NUPLAN_TEST_SENSORS = DATA_ROOT / "nuPlan" / "sensor_blobs"
 
 # nuScenes raw is shared with trainval (val frames live in samples/CAM_*/).
 NUSC_RAW = DATA_ROOT / "nuScenes"
@@ -95,6 +96,13 @@ def extract_test_json_tarball(tarball: Path, target_root: Path):
 
 
 def collect_nuplan_paths(samples_dir: Path):
+    """Walk extracted test JSONs and build the set of needed jpg/pkl paths.
+
+    JSONs from the upstream pipeline use the legacy
+    `/data/nuPlan/test_sensor_blobs/test/...` form; we translate them in-memory
+    to the unified `/data/nuPlan/sensor_blobs/test/...` form so the in-memory
+    set matches the destinations used by extract_nuplan_raw() below. Idempotent
+    for JSONs that already use the new layout."""
     jpgs, scenes = set(), set()
     for fp in samples_dir.rglob("*.json"):
         d = json.loads(fp.read_text())
@@ -102,11 +110,12 @@ def collect_nuplan_paths(samples_dir: Path):
             for p in d.get(field) or []:
                 if not isinstance(p, str):
                     continue
-                jpgs.add(p)
-                # /data/nuPlan/test_sensor_blobs/test/<log>/CAM_X/<jpg>.jpg
-                parts = p.split("/")
+                p_new = p.replace("/test_sensor_blobs/", "/sensor_blobs/")
+                jpgs.add(p_new)
+                # /data/nuPlan/sensor_blobs/test/<log>/CAM_X/<jpg>.jpg
+                parts = p_new.split("/")
                 try:
-                    i = parts.index("test_sensor_blobs")
+                    i = parts.index("sensor_blobs")
                     scenes.add(parts[i + 2])  # skip "test/"
                 except (ValueError, IndexError):
                     pass
