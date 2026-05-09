@@ -179,7 +179,6 @@ def run_preprocessing(args, config_path: Path, sample_ids_json: Path) -> int:
         "--include-cot", args.include_cot,
         "--sample-ids-json", str(sample_ids_json),
         "--resume",
-        "--resume-dir", str(args.output_dir),
     ]
     if args.cuda_devices:
         cmd += ["--cuda-devices", args.cuda_devices]

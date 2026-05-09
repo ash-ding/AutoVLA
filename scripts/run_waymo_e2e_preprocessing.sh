@@ -11,7 +11,6 @@ CONFIG="${CONFIG:-dataset/qwen2.5-vl-72B-waymo}"
 OUTPUT_DIR="${OUTPUT_DIR:-temp}"
 SAMPLE_IDS_JSON="${SAMPLE_IDS_JSON:-}"
 RESUME="${RESUME:-false}"
-RESUME_DIRS=()
 NUM_WORKERS="${NUM_WORKERS:-32}"
 SEED="${SEED:-42}"
 CUDA_DEVICES="${CUDA_DEVICES:-}"
@@ -27,7 +26,6 @@ Options:
   --include-cot true|false Run CoT or No-CoT preprocessing (default: false)
   --sample-ids-json PATH   JSON file containing tokens to preprocess
   --resume                 Skip tokens that already have JSON outputs in --output_dir
-  --resume-dir PATH        Extra directory to scan for processed tokens (repeatable)
   --num-workers N          DataLoader workers (default: 32)
   --seed N                 Random seed (default: 42)
   --cuda-devices LIST      Value for CUDA_VISIBLE_DEVICES (default: leave unset; CoT defaults to "0,1")
@@ -56,10 +54,6 @@ while [[ $# -gt 0 ]]; do
         --resume)
             RESUME=true
             shift
-            ;;
-        --resume-dir)
-            RESUME_DIRS+=("$2")
-            shift 2
             ;;
         --num-workers)
             NUM_WORKERS="$2"
@@ -103,10 +97,6 @@ fi
 if [[ "$RESUME" == true ]]; then
     COMMON_ARGS+=(--resume)
 fi
-
-for d in "${RESUME_DIRS[@]:-}"; do
-    [[ -n "$d" ]] && COMMON_ARGS+=(--resume-dir "$d")
-done
 
 if [[ "$INCLUDE_COT" == true ]]; then
     echo "Preprocessing with Chain-of-Thought (CoT)..."

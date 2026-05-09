@@ -95,13 +95,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--resume",
         action="store_true",
-        help="Skip tokens that already have JSON outputs",
-    )
-    parser.add_argument(
-        "--resume-dir",
-        action="append",
-        default=None,
-        help="Directory to scan for existing token JSONs. Can be passed multiple times.",
+        help="Skip tokens that already have JSON outputs in --output_dir",
     )
     args = parser.parse_args()
     seed_everything(args.seed)
@@ -152,13 +146,9 @@ if __name__ == "__main__":
     else:
         selected_indices = list(range(len(dataset)))
 
-    resume_dirs = list(args.resume_dir or [])
-    if args.resume and not resume_dirs:
-        resume_dirs.append(args.output_dir)
-
     processed_tokens = set(pre_generated_tokens)
     if args.resume:
-        processed_tokens.update(collect_processed_tokens(resume_dirs))
+        processed_tokens.update(collect_processed_tokens([args.output_dir]))
 
     if processed_tokens:
         selected_indices = [

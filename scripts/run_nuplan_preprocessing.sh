@@ -117,13 +117,6 @@ if [[ "$INCLUDE_COT" == true ]]; then
     fi
 
     PIDS=()
-    RESUME_DIR_ARGS=()
-    if [[ "$RESUME" == true ]]; then
-        for i in $(seq 1 "$NUM_SHARDS"); do
-            RESUME_DIR_ARGS+=(--resume-dir "${OUTPUT_ROOT}/CoT_part${i}")
-        done
-    fi
-
     for i in $(seq 1 "$NUM_SHARDS"); do
         GPU_IDX=$((i - 1))
         OUT_DIR="${OUTPUT_ROOT}/CoT_part${i}"
@@ -133,9 +126,6 @@ if [[ "$INCLUDE_COT" == true ]]; then
             --num_parts "$NUM_SHARDS"
             --sample_num "$i"
         )
-        if [[ "$RESUME" == true ]]; then
-            SHARD_ARGS+=("${RESUME_DIR_ARGS[@]}")
-        fi
 
         if [[ -n "$LOG_DIR" ]]; then
             LOG_FILE="${LOG_DIR}/nuplan_preprocessing_shard${i}.log"
@@ -174,9 +164,6 @@ else
         "${COMMON_ARGS[@]}"
         --output_dir "$OUTPUT_DIR"
     )
-    if [[ "$RESUME" == true ]]; then
-        NO_COT_ARGS+=(--resume-dir "$OUTPUT_DIR")
-    fi
 
     if [[ -n "$LOG_DIR" ]]; then
         "$PYTHON" tools/preprocessing/nocot_sample_generation.py \

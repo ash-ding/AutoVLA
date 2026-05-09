@@ -113,9 +113,6 @@ def _build_child_argv(args, dp_index, dp_size):
         cmd += ["--sample-ids-json", args.sample_ids_json]
     if args.resume:
         cmd += ["--resume"]
-    if args.resume_dir:
-        for d in args.resume_dir:
-            cmd += ["--resume-dir", d]
     return cmd
 
 
@@ -210,13 +207,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--resume",
         action="store_true",
-        help="Skip tokens that already have JSON outputs",
-    )
-    parser.add_argument(
-        "--resume-dir",
-        action="append",
-        default=None,
-        help="Directory to scan for existing token JSONs. Can be passed multiple times.",
+        help="Skip tokens that already have JSON outputs in --output_dir",
     )
     parser.add_argument(
         "--dp_size",
@@ -328,8 +319,7 @@ if __name__ == "__main__":
 
     selected_indices = partition_indices(indices, args.sample_num, args.num_parts)
 
-    resume_dirs = args.resume_dir or [args.output_dir]
-    processed_tokens = collect_processed_tokens(resume_dirs) if args.resume else set()
+    processed_tokens = collect_processed_tokens([args.output_dir]) if args.resume else set()
     if processed_tokens:
         selected_indices = [
             idx for idx in selected_indices if dataset_tokens[idx] not in processed_tokens
@@ -356,7 +346,7 @@ if __name__ == "__main__":
         )
     if args.resume:
         print(
-            f"Resume mode found {len(processed_tokens)} processed tokens across {len(resume_dirs)} directories."
+            f"Resume mode found {len(processed_tokens)} processed tokens in {args.output_dir}."
         )
         print(
             f"Shard {args.sample_num}/{args.num_parts} will process {len(selected_indices)} remaining samples."
