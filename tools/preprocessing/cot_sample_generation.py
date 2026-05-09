@@ -1,5 +1,8 @@
 import os
 import random
+import signal
+import subprocess
+import sys
 import yaml
 import argparse
 from tqdm import tqdm
@@ -85,6 +88,109 @@ def build_result(sample, cot_text, dataset_name, fallback_idx):
     return token, result
 
 
+def _resolve_visible_gpus():
+    env = os.environ.get("CUDA_VISIBLE_DEVICES")
+    if env is not None and env.strip() != "":
+        return [g.strip() for g in env.split(",") if g.strip() != ""]
+    import torch
+    return [str(i) for i in range(torch.cuda.device_count())]
+
+
+def _build_child_argv(args, dp_index, dp_size):
+    """Re-emit CLI args for a DP child, swapping in per-shard sharding values."""
+    cmd = [sys.executable, sys.argv[0],
+           "--config", args.config,
+           "--output_dir", args.output_dir,
+           "--seed", str(args.seed),
+           "--dp_size", "1",
+           "--num_parts", str(dp_size),
+           "--sample_num", str(dp_index + 1)]
+    if args.backend is not None:
+        cmd += ["--backend", args.backend]
+    if args.tp_size is not None:
+        cmd += ["--tp_size", str(args.tp_size)]
+    if args.sample_ids_json is not None:
+        cmd += ["--sample-ids-json", args.sample_ids_json]
+    if args.resume:
+        cmd += ["--resume"]
+    if args.resume_dir:
+        for d in args.resume_dir:
+            cmd += ["--resume-dir", d]
+    return cmd
+
+
+def _spawn_dp_children(args, backend):
+    """Fan out N DP children via subprocess; never returns."""
+    dp = args.dp_size
+
+    if backend == "vllm":
+        visible = _resolve_visible_gpus()
+        tp = args.tp_size if args.tp_size is not None else 1
+    else:
+        visible = []
+        tp = 1
+
+    procs = []
+    log_files = []
+    log_paths = []
+
+    def _terminate_all(signum=None, frame=None):
+        print(f"\n[DP parent] received signal {signum}, terminating {len(procs)} children...", flush=True)
+        for p in procs:
+            if p.poll() is None:
+                try:
+                    p.terminate()
+                except Exception:
+                    pass
+        for p in procs:
+            try:
+                p.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                try:
+                    p.kill()
+                except Exception:
+                    pass
+        for f in log_files:
+            try:
+                f.close()
+            except Exception:
+                pass
+        sys.exit(130)
+
+    signal.signal(signal.SIGINT, _terminate_all)
+    signal.signal(signal.SIGTERM, _terminate_all)
+
+    for i in range(dp):
+        child_env = os.environ.copy()
+        child_env["AUTOVLA_DP_CHILD"] = "1"
+        if backend == "vllm":
+            child_env["CUDA_VISIBLE_DEVICES"] = ",".join(visible[i * tp:(i + 1) * tp])
+
+        cmd = _build_child_argv(args, i, dp)
+        log_path = os.path.join(args.output_dir, f"_dp_shard_{i}.log")
+        log_paths.append(log_path)
+        f = open(log_path, "w")
+        log_files.append(f)
+        gpu_info = f" CUDA_VISIBLE_DEVICES={child_env['CUDA_VISIBLE_DEVICES']}" if backend == "vllm" else ""
+        print(f"[DP parent] spawn shard {i + 1}/{dp}{gpu_info} -> {log_path}", flush=True)
+        procs.append(subprocess.Popen(cmd, env=child_env, stdout=f, stderr=subprocess.STDOUT))
+
+    rc_total = 0
+    for i, p in enumerate(procs):
+        rc = p.wait()
+        log_files[i].close()
+        status = "ok" if rc == 0 else f"FAILED rc={rc}"
+        print(f"[DP parent] shard {i + 1}/{dp} {status} (log: {log_paths[i]})", flush=True)
+        if rc != 0:
+            rc_total = 1
+
+    if rc_total != 0:
+        print(f"[DP parent] one or more shards failed; see logs above.", flush=True)
+        sys.exit(1)
+    print(f"[DP parent] DP run complete: {dp} shards.", flush=True)
+    sys.exit(0)
+
+
 if __name__ == "__main__":
     # Arguments
     parser = argparse.ArgumentParser()
@@ -112,6 +218,18 @@ if __name__ == "__main__":
         default=None,
         help="Directory to scan for existing token JSONs. Can be passed multiple times.",
     )
+    parser.add_argument(
+        "--dp_size",
+        type=int,
+        default=1,
+        help="Number of DP replicas to fan out via subprocess. 1 = single process (default).",
+    )
+    parser.add_argument(
+        "--tp_size",
+        type=int,
+        default=None,
+        help="Override config's tensor_parallel_size. Requires --backend vllm.",
+    )
     args = parser.parse_args()
 
     # Load configuration
@@ -122,8 +240,37 @@ if __name__ == "__main__":
     # Determine backend: CLI arg > config > default (vllm)
     backend = args.backend or config.get('annotation_backend', 'vllm')
 
-    # Output directory
+    # --- Validation: --tp_size, --dp_size, manual sharding interactions ---
+    if args.tp_size is not None and backend != 'vllm':
+        sys.exit(f"--tp_size requires --backend vllm; current backend is '{backend}'.")
+    if args.dp_size < 1:
+        sys.exit(f"--dp_size must be >= 1, got {args.dp_size}.")
+    if args.dp_size > 1 and (args.num_parts > 1 or args.sample_num != 1):
+        sys.exit(
+            "--dp_size is mutually exclusive with manual sharding via --num_parts/--sample_num. "
+            f"Got dp_size={args.dp_size}, num_parts={args.num_parts}, sample_num={args.sample_num}."
+        )
+
+    # Output directory (created early so DP shard logs can be written into it)
     os.makedirs(args.output_dir, exist_ok=True)
+
+    # Parent path: fan out DP children, then exit. Skipped when DP=1 or already a child.
+    is_dp_child = os.environ.get("AUTOVLA_DP_CHILD") == "1"
+    if args.dp_size > 1 and not is_dp_child:
+        if backend == 'vllm':
+            tp_eff = args.tp_size if args.tp_size is not None else int(config.get('tensor_parallel_size', 1))
+            visible = _resolve_visible_gpus()
+            if args.dp_size * tp_eff > len(visible):
+                sys.exit(
+                    f"DP*TP = {args.dp_size}*{tp_eff} = {args.dp_size * tp_eff} > "
+                    f"{len(visible)} visible GPUs ({visible})."
+                )
+        _spawn_dp_children(args, backend)
+        # _spawn_dp_children calls sys.exit; unreachable below.
+
+    # Inject CLI TP override into config so the vLLM backend picks it up.
+    if args.tp_size is not None:
+        config['tensor_parallel_size'] = args.tp_size
 
     if backend == 'vllm':
         # IMPORTANT: CoTAnnotationModel (vLLM) must be imported and initialized BEFORE
