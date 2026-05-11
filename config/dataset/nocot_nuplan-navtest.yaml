@@ -7,6 +7,6 @@ num_workers: 8
 
 dataset_name: nuplan
 # 'placeholder' is replaced with 'navsim_logs' / 'sensor_blobs' at runtime by nuplan_dataset.py.
-# Final paths: /data/nuPlan/test_navsim_logs/test/<log>.pkl, /data/nuPlan/test_sensor_blobs/test/<log>/<cam>/<jpg>
-dataset_path: /data/nuPlan/test_placeholder/test
+# Final paths: /data/nuPlan/navsim_logs/test/<log>.pkl, /data/nuPlan/sensor_blobs/test/<log>/<cam>/<jpg>
+dataset_path: /data/nuPlan/placeholder/test
 scene_filter: /root/code/AutoVLA/navsim/navsim/planning/script/config/common/train_test_split/scene_filter/navtest.yaml

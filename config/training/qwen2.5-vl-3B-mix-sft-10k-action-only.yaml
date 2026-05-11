@@ -39,8 +39,8 @@ data:
       - /data/nuplan_nuscenes_train_mix_10k/nuScenes/action_only_samples_871
       - /data/nuplan_nuscenes_train_mix_10k/nuScenes/nl_reasoning_samples_156
     sensor_data_path:
-      - /data/nuPlan/trainval_sensor_blobs/trainval
-      - /data/nuPlan/trainval_sensor_blobs/trainval
+      - /data/nuPlan/sensor_blobs/trainval
+      - /data/nuPlan/sensor_blobs/trainval
       - /data/nuScenes
       - /data/nuScenes
 
