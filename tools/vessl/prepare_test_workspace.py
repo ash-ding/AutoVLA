@@ -13,9 +13,13 @@ For --dataset nuplan / nuscenes / both:
 This is purely a deploy-from-backup script; the sample JSONs and raw
 tarballs in /backup are produced by a separate preprocessing flow.
 
-Camera pruning is "level 3":
-  nuPlan   → front_camera_paths,        left_camera_paths,        right_camera_paths
-  nuScenes → front_camera_paths,        front_left_camera_paths,  front_right_camera_paths
+Camera pruning is configurable via --num-cameras (3 or 4):
+  num_cameras=3 (default, SFT/RL training set):
+    nuPlan   → front_camera_paths, left_camera_paths, right_camera_paths
+    nuScenes → front_camera_paths, front_left_camera_paths, front_right_camera_paths
+  num_cameras=4 (CoT-annotation set, adds back):
+    nuPlan   → above + back_camera_paths
+    nuScenes → above + back_camera_paths
 
 Resumable: existing files on disk are skipped; rerunning is safe.
 """
@@ -33,8 +37,7 @@ from prepare_scaling_workspace import (  # noqa: E402
     open_streaming_tar,
     stream_extract_filtered,
     NUSC_SKIP_PREFIXES,
-    NUPLAN_USED_FIELDS,
-    NUSC_USED_FIELDS,
+    used_fields,
 )
 
 
@@ -95,7 +98,7 @@ def extract_test_json_tarball(tarball: Path, target_root: Path):
     return target_root / next(iter(top_levels)), n
 
 
-def collect_nuplan_paths(samples_dir: Path):
+def collect_nuplan_paths(samples_dir: Path, num_cameras: int = 3):
     """Walk extracted test JSONs and build the set of needed jpg/pkl paths.
 
     JSONs from the upstream pipeline use the legacy
@@ -104,9 +107,10 @@ def collect_nuplan_paths(samples_dir: Path):
     set matches the destinations used by extract_nuplan_raw() below. Idempotent
     for JSONs that already use the new layout."""
     jpgs, scenes = set(), set()
+    fields = used_fields("nuplan", num_cameras)
     for fp in samples_dir.rglob("*.json"):
         d = json.loads(fp.read_text())
-        for field in NUPLAN_USED_FIELDS:
+        for field in fields:
             for p in d.get(field) or []:
                 if not isinstance(p, str):
                     continue
@@ -123,11 +127,12 @@ def collect_nuplan_paths(samples_dir: Path):
     return jpgs, pkls, scenes
 
 
-def collect_nuscenes_paths(samples_dir: Path):
+def collect_nuscenes_paths(samples_dir: Path, num_cameras: int = 3):
     jpgs = set()
+    fields = used_fields("nuscenes", num_cameras)
     for fp in samples_dir.rglob("*.json"):
         d = json.loads(fp.read_text())
-        for field in NUSC_USED_FIELDS:
+        for field in fields:
             for p in d.get(field) or []:
                 if isinstance(p, str):
                     jpgs.add(p)
@@ -240,7 +245,7 @@ def extract_nuscenes_raw(jpgs: set, parallelism: int):
           f"elapsed={perf_counter()-t0:.1f}s")
 
 
-def process_nuplan(parallelism: int, force: bool, skip_raw: bool) -> int:
+def process_nuplan(parallelism: int, force: bool, skip_raw: bool, num_cameras: int = 3) -> int:
     print(f"\n========== nuPlan test ==========")
     if force and NUPLAN_TEST_WORKSPACE.exists():
         print(f"--force: removing {NUPLAN_TEST_WORKSPACE}")
@@ -257,9 +262,9 @@ def process_nuplan(parallelism: int, force: bool, skip_raw: bool) -> int:
         print("\n--skip-raw set; nuPlan done.")
         return 0
 
-    print(f"\n=== Phase 2: compute needed raw paths ===")
+    print(f"\n=== Phase 2: compute needed raw paths (num_cameras={num_cameras}) ===")
     t2 = perf_counter()
-    jpgs, pkls, scenes = collect_nuplan_paths(samples_dir)
+    jpgs, pkls, scenes = collect_nuplan_paths(samples_dir, num_cameras)
     print(f"  {len(jpgs)} jpgs, {len(scenes)} scenes ({len(pkls)} pkls)")
     print(f"  Phase 2 elapsed: {perf_counter()-t2:.1f}s")
 
@@ -279,7 +284,7 @@ def process_nuplan(parallelism: int, force: bool, skip_raw: bool) -> int:
     return 0
 
 
-def process_nuscenes(parallelism: int, force: bool, skip_raw: bool) -> int:
+def process_nuscenes(parallelism: int, force: bool, skip_raw: bool, num_cameras: int = 3) -> int:
     print(f"\n========== nuScenes test ==========")
     if force and NUSC_TEST_WORKSPACE.exists():
         print(f"--force: removing {NUSC_TEST_WORKSPACE}")
@@ -296,9 +301,9 @@ def process_nuscenes(parallelism: int, force: bool, skip_raw: bool) -> int:
         print("\n--skip-raw set; nuScenes done.")
         return 0
 
-    print(f"\n=== Phase 2: compute needed raw paths ===")
+    print(f"\n=== Phase 2: compute needed raw paths (num_cameras={num_cameras}) ===")
     t2 = perf_counter()
-    jpgs = collect_nuscenes_paths(samples_dir)
+    jpgs = collect_nuscenes_paths(samples_dir, num_cameras)
     print(f"  {len(jpgs)} jpgs")
     print(f"  Phase 2 elapsed: {perf_counter()-t2:.1f}s")
 
@@ -327,13 +332,17 @@ def main():
                    help="rm -rf the test workspace before starting.")
     p.add_argument("--skip-raw", action="store_true",
                    help="Skip raw-data extraction (only build the JSON workspace).")
+    p.add_argument("--num-cameras", type=int, choices=(3, 4), default=3,
+                   help="Per-dataset camera count. 3 = SFT/RL training set "
+                        "(nuPlan F0+L1+R1, nuScenes front+front_left+front_right). "
+                        "4 = adds back camera, matches CoT-annotation prompt set.")
     args = p.parse_args()
 
     rc = 0
     if args.dataset in ("nuplan", "both"):
-        rc |= process_nuplan(args.parallelism, args.force, args.skip_raw)
+        rc |= process_nuplan(args.parallelism, args.force, args.skip_raw, args.num_cameras)
     if args.dataset in ("nuscenes", "both"):
-        rc |= process_nuscenes(args.parallelism, args.force, args.skip_raw)
+        rc |= process_nuscenes(args.parallelism, args.force, args.skip_raw, args.num_cameras)
     return rc
 
 

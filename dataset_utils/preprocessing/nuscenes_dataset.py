@@ -53,11 +53,14 @@ from dataset_utils.preprocessing.nuplan_dataset import process_image_input
 CAM_LIST = ['front', 'front_left', 'front_right',
             'back', 'back_left', 'back_right', 'left', 'right']
 
-# (logical side, nuScenes camera channel) for the 3 cameras symbolic / SFT use.
-NUSC_CAMERA_TYPES_3 = [
+# (logical side, nuScenes camera channel) for the 4 cameras the symbolic CoT
+# annotator consumes — forward triplet + back, matching the NuplanCoTAnnotationDataset
+# 360° prompt set so cross-dataset CoT distributions stay aligned.
+NUSC_CAMERA_TYPES = [
     ('front', 'CAM_FRONT'),
     ('front_left', 'CAM_FRONT_LEFT'),
     ('front_right', 'CAM_FRONT_RIGHT'),
+    ('back', 'CAM_BACK'),
 ]
 
 
@@ -377,10 +380,10 @@ class NuscenesCoTAnnotationDataset(Dataset):
         his_trajectory = torch.tensor(his_fl, dtype=torch.float32)
 
         # Camera paths: walk history backwards for 4 frames (his_ts + 1) per camera.
-        camera_paths: Dict[str, List[str]] = {f"{side}_camera_paths": [] for side, _ in NUSC_CAMERA_TYPES_3}
+        camera_paths: Dict[str, List[str]] = {f"{side}_camera_paths": [] for side, _ in NUSC_CAMERA_TYPES}
         sample_cur = sample
         for i in range(self.his_ts, -1, -1):
-            for side, cam_type in NUSC_CAMERA_TYPES_3:
+            for side, cam_type in NUSC_CAMERA_TYPES:
                 cam_token = sample_cur['data'][cam_type]
                 cam_path, _, _ = self.nusc.get_sample_data(cam_token)
                 cam_path = self._maybe_remap_path(cam_path)
@@ -414,11 +417,14 @@ class NuscenesCoTAnnotationDataset(Dataset):
         return inputs
 
     def _build_vlm_inputs(self, camera_paths, velocity, acceleration, instruction, fut_ego_action):
-        """Decode 3 cameras × 4 frames and build the Qwen-style multimodal `messages`.
+        """Decode 4 cameras × 4 frames and build the Qwen-style multimodal `messages`.
 
-        Camera set (front + front_left + front_right) matches what SFTDataset
-        and the downstream AutoVLA agent consume, so the symbolic CoT
-        annotator sees the same view distribution.
+        Camera set (front + front_left + front_right + back) mirrors the
+        NuplanCoTAnnotationDataset 360° prompt so cross-dataset CoT
+        distributions stay aligned. Back view is included because the CoT
+        annotator benefits from full-scene context when writing reasoning;
+        SFTDataset will later subsample to a 3-camera training input on its
+        own.
         """
         from qwen_vl_utils import process_vision_info
 
@@ -434,6 +440,7 @@ class NuscenesCoTAnnotationDataset(Dataset):
         front_video = load_b64_video(camera_paths["front_camera_paths"])
         front_left_video = load_b64_video(camera_paths["front_left_camera_paths"])
         front_right_video = load_b64_video(camera_paths["front_right_camera_paths"])
+        back_video = load_b64_video(camera_paths["back_camera_paths"])
 
         messages = [
             {
@@ -446,9 +453,9 @@ class NuscenesCoTAnnotationDataset(Dataset):
                     {
                         "type": "text",
                         "text": (
-                            "Three cameras are mounted on the vehicle to perceive the surrounding "
-                            "environment. These cameras provide the front, front-left, and "
-                            "front-right views. The multi-view multi-frame camera images are "
+                            "Four cameras are mounted on the vehicle to perceive the surrounding "
+                            "environment. These cameras provide the front, front-left, front-right, "
+                            "and back views. The multi-view multi-frame camera images are "
                             "organized in a video format."
                         ),
                     },
@@ -490,6 +497,19 @@ class NuscenesCoTAnnotationDataset(Dataset):
                         "min_pixels": 400 * 400,
                         "max_pixels": 400 * 400,
                         "video": front_right_video,
+                    },
+                    {
+                        "type": "text",
+                        "text": (
+                            "The video is from the back camera, capturing the history of the "
+                            "vehicle's back view from the past two seconds at 2Hz."
+                        ),
+                    },
+                    {
+                        "type": "video",
+                        "min_pixels": 400 * 400,
+                        "max_pixels": 400 * 400,
+                        "video": back_video,
                     },
                     {
                         "type": "text",

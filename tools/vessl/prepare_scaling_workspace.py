@@ -10,8 +10,12 @@ For a chosen scale (10k/50k/100k/185k) and CoT model (e.g. Qwen2.4_VL_72B_Instru
      in the needed set that don't already exist on disk.
   4. Same for nuScenes (only samples/CAM_<6>, plus v1.0-trainval/ + maps/).
 
-Camera pruning is "level 3": only the 3 cameras SFTDataset actually reads (front,
-front-left, front-right). Sweeps + LIDAR/RADAR samples are excluded for nuScenes.
+Camera pruning is configurable via --num-cameras:
+  - 3 (default): the cameras SFTDataset / RL inference actually read at training
+    time — nuPlan = F0 + L1 + R1, nuScenes = front + front_left + front_right.
+  - 4: adds the back camera, matching the CoT-annotation prompt set used by
+    NuplanCoTAnnotationDataset and NuscenesCoTAnnotationDataset.
+Sweeps + LIDAR/RADAR samples are excluded for nuScenes regardless.
 
 Resumable: re-running with the same args is safe; existing files are skipped, so
 running --scale 10k after --scale 50k does almost no work for raw data.
@@ -57,8 +61,27 @@ NUSC_SKIP_PREFIXES = (
 # autovla_agent.py:256-261 maps these to *different* JSON fields per dataset:
 #   nuplan   → front_camera_paths,        left_camera_paths,        right_camera_paths
 #   nuscenes → front_camera_paths,        front_left_camera_paths,  front_right_camera_paths
-NUPLAN_USED_FIELDS = ("front_camera_paths", "left_camera_paths", "right_camera_paths")
-NUSC_USED_FIELDS   = ("front_camera_paths", "front_left_camera_paths", "front_right_camera_paths")
+def used_fields(dataset: str, num_cameras: int = 3) -> tuple:
+    """JSON field names that hold the camera path arrays this workspace needs.
+
+    num_cameras = 3 → SFT/RL training set (training-time disagrees with the
+    CoT-annotation 4-set on the back camera).
+    num_cameras = 4 → adds back camera (CoT-annotation set).
+    """
+    if dataset == "nuplan":
+        # F0 + L1 + R1 (+ B0 when num_cameras == 4)
+        fields = ["front_camera_paths", "left_camera_paths", "right_camera_paths"]
+    elif dataset == "nuscenes":
+        # front + front_left + front_right (+ back when num_cameras == 4)
+        fields = ["front_camera_paths", "front_left_camera_paths", "front_right_camera_paths"]
+    else:
+        raise ValueError(f"Unknown dataset {dataset!r}")
+
+    if num_cameras == 4:
+        fields.append("back_camera_paths")
+    elif num_cameras != 3:
+        raise ValueError(f"num_cameras must be 3 or 4, got {num_cameras}")
+    return tuple(fields)
 
 
 def open_streaming_tar(tarball: Path):
@@ -167,12 +190,12 @@ def extract_sample_tarball(tarball: Path, target_subdir: Path, dataset_prefix: s
     return n
 
 
-def collect_needed_raw_paths(workspace: Path):
+def collect_needed_raw_paths(workspace: Path, num_cameras: int = 3):
     """Walk the per-scale workspace JSONs, return:
       - nuplan_jpgs: set of absolute jpg paths under /data/nuPlan/sensor_blobs/trainval/
       - nuplan_pkls: set of absolute pkl paths under /data/nuPlan/navsim_logs/trainval/
       - nusc_jpgs:   set of absolute jpg paths under /data/nuScenes/samples/
-    Each set is restricted to the 3 cameras SFTDataset actually consumes.
+    Each set is restricted to `num_cameras` cameras per dataset (3 or 4).
 
     JSON paths produced by the upstream pipeline use the legacy
     `/data/nuPlan/trainval_sensor_blobs/trainval/...` form; we translate them
@@ -183,10 +206,13 @@ def collect_needed_raw_paths(workspace: Path):
     nuplan_scenes = set()
     nusc_jpgs = set()
 
+    nuplan_fields = used_fields("nuplan", num_cameras)
+    nusc_fields = used_fields("nuscenes", num_cameras)
+
     for jpath in (workspace / "nuPlan").rglob("*.json"):
         with open(jpath) as f:
             d = json.load(f)
-        for field in NUPLAN_USED_FIELDS:
+        for field in nuplan_fields:
             for p in d.get(field) or []:
                 if not isinstance(p, str):
                     continue
@@ -203,7 +229,7 @@ def collect_needed_raw_paths(workspace: Path):
     for jpath in (workspace / "nuScenes").rglob("*.json"):
         with open(jpath) as f:
             d = json.load(f)
-        for field in NUSC_USED_FIELDS:
+        for field in nusc_fields:
             for p in d.get(field) or []:
                 if not isinstance(p, str):
                     continue
@@ -353,6 +379,10 @@ def main():
                    help="rm -rf the per-scale workspace before starting.")
     p.add_argument("--skip-raw", action="store_true",
                    help="Skip raw-data extraction (only build the per-scale JSON workspace).")
+    p.add_argument("--num-cameras", type=int, choices=(3, 4), default=3,
+                   help="Per-dataset camera count. 3 = SFT/RL training set "
+                        "(nuPlan F0+L1+R1, nuScenes front+front_left+front_right). "
+                        "4 = adds back camera, matches CoT-annotation prompt set.")
     args = p.parse_args()
 
     workspace = DATA_ROOT / f"nuplan_nuscenes_train_mix_{args.scale}"
@@ -394,9 +424,9 @@ def main():
         return 0
 
     # Phase 2
-    print(f"\n=== Phase 2: compute needed raw paths ===")
+    print(f"\n=== Phase 2: compute needed raw paths (num_cameras={args.num_cameras}) ===")
     t2 = perf_counter()
-    nuplan_jpgs, nuplan_pkls, nusc_jpgs, nuplan_scenes = collect_needed_raw_paths(workspace)
+    nuplan_jpgs, nuplan_pkls, nusc_jpgs, nuplan_scenes = collect_needed_raw_paths(workspace, args.num_cameras)
     print(f"  nuplan: {len(nuplan_jpgs)} jpgs, {len(nuplan_scenes)} scenes ({len(nuplan_pkls)} pkls)")
     print(f"  nuscenes: {len(nusc_jpgs)} jpgs")
     print(f"  Phase 2 elapsed: {perf_counter()-t2:.1f}s")
