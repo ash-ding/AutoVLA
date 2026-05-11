@@ -32,6 +32,15 @@ from pyquaternion import Quaternion
 from nuscenes.utils.geometry_utils import transform_matrix
 from nuscenes.utils import splits
 
+# Canonical source lives in dataset_utils/preprocessing/nuscenes_dataset.py so
+# both this script and NuscenesCoTAnnotationDataset share the same logic.
+from dataset_utils.preprocessing.nuscenes_dataset import (  # noqa: F401
+    get_global_sensor_pose,
+    get_ego_pose_future_his,
+    get_ego_velocity,
+    get_planning_instruction,
+)
+
 
 def convert_to_json_serializable(obj):
     """Convert numpy arrays and torch tensors to JSON serializable format."""
@@ -56,185 +65,6 @@ def quart_to_rpy(qua):
     pitch = math.asin(2 * (w * y - x * z))
     yaw = math.atan2(2 * (w * z + x * y), 1 - 2 * (z * z + y * y))
     return roll, pitch, yaw
-
-
-def get_global_sensor_pose(rec, nusc, inverse=False):
-    """Get global sensor pose transformation matrix."""
-    lidar_sample_data = nusc.get('sample_data', rec['data']['LIDAR_TOP'])
-    sd_ep = nusc.get("ego_pose", lidar_sample_data["ego_pose_token"])
-    sd_cs = nusc.get("calibrated_sensor", lidar_sample_data["calibrated_sensor_token"])
-
-    if not inverse:
-        global_from_ego = transform_matrix(sd_ep["translation"], Quaternion(sd_ep["rotation"]), inverse=False)
-        ego_from_sensor = transform_matrix(sd_cs["translation"], Quaternion(sd_cs["rotation"]), inverse=False)
-        pose = global_from_ego.dot(ego_from_sensor)
-    else:
-        sensor_from_ego = transform_matrix(sd_cs["translation"], Quaternion(sd_cs["rotation"]), inverse=True)
-        ego_from_global = transform_matrix(sd_ep["translation"], Quaternion(sd_ep["rotation"]), inverse=True)
-        pose = sensor_from_ego.dot(ego_from_global)
-
-    return pose
-
-
-def get_ego_pose_future_his(nusc, fut_ts, sample, his_ts):
-    """Extract ego trajectory for history and future frames."""
-    ego_his_trajs = np.zeros((his_ts + 1, 3))
-    ego_his_trajs_diff = np.zeros((his_ts + 1, 3))
-    ego_his_masks = np.zeros((his_ts + 1))
-    sample_cur = sample
-    
-    sd_rec = nusc.get('sample_data', sample['data']['LIDAR_TOP'])
-    cs_record = nusc.get('calibrated_sensor', sd_rec['calibrated_sensor_token'])
-    pose_record = nusc.get('ego_pose', sd_rec['ego_pose_token'])
-    
-    # Extract history trajectory
-    for i in range(his_ts, -1, -1):
-        if sample_cur is not None:
-            pose_mat = get_global_sensor_pose(sample_cur, nusc, inverse=False)
-            ego_his_trajs[i] = pose_mat[:3, 3]
-            ego_his_masks[i] = 1
-            has_prev = sample_cur['prev'] != ''
-            has_next = sample_cur['next'] != ''
-            if has_next:
-                sample_next = nusc.get('sample', sample_cur['next'])
-                pose_mat_next = get_global_sensor_pose(sample_next, nusc, inverse=False)
-                ego_his_trajs_diff[i] = pose_mat_next[:3, 3] - ego_his_trajs[i]
-            sample_cur = nusc.get('sample', sample_cur['prev']) if has_prev else None
-        else:
-            ego_his_trajs[i] = ego_his_trajs[i + 1] - ego_his_trajs_diff[i + 1]
-            ego_his_trajs_diff[i] = ego_his_trajs_diff[i + 1]
-    
-    # Transform to ego frame (global to ego at lcf)
-    ego_his_trajs = ego_his_trajs - np.array(pose_record['translation'])
-    rot_mat = Quaternion(pose_record['rotation']).inverse.rotation_matrix
-    ego_his_trajs = np.dot(rot_mat, ego_his_trajs.T).T
-    
-    # Ego to lidar at lcf
-    ego_his_trajs = ego_his_trajs - np.array(cs_record['translation'])
-    rot_mat = Quaternion(cs_record['rotation']).inverse.rotation_matrix
-    ego_his_trajs = np.dot(rot_mat, ego_his_trajs.T).T
-    ego_his_diff = ego_his_trajs[1:] - ego_his_trajs[:-1]
-
-    # Extract future trajectory
-    ego_fut_trajs = np.zeros((fut_ts + 1, 3))
-    ego_fut_masks = np.zeros((fut_ts + 1))
-    sample_cur = sample
-    
-    for i in range(fut_ts + 1):
-        pose_mat = get_global_sensor_pose(sample_cur, nusc, inverse=False)
-        ego_fut_trajs[i] = pose_mat[:3, 3]
-        ego_fut_masks[i] = 1
-        if sample_cur['next'] == '':
-            ego_fut_trajs[i + 1:] = ego_fut_trajs[i]
-            break
-        else:
-            sample_cur = nusc.get('sample', sample_cur['next'])
-    
-    # Transform to ego frame
-    ego_fut_trajs = ego_fut_trajs - np.array(pose_record['translation'])
-    rot_mat = Quaternion(pose_record['rotation']).inverse.rotation_matrix
-    ego_fut_trajs = np.dot(rot_mat, ego_fut_trajs.T).T
-    ego_fut_trajs = ego_fut_trajs - np.array(cs_record['translation'])
-    rot_mat = Quaternion(cs_record['rotation']).inverse.rotation_matrix
-    ego_fut_trajs = np.dot(rot_mat, ego_fut_trajs.T).T
-    
-    # Determine driving command based on final future position
-    if ego_fut_trajs[-1][0] >= 2:
-        command = 'Turn Right'
-    elif ego_fut_trajs[-1][0] <= -2:
-        command = 'Turn Left'
-    else:
-        command = 'Go Straight'
-    
-    ego_fut_diff = ego_fut_trajs[1:] - ego_fut_trajs[:-1]
-    
-    return (
-        ego_fut_diff[:, :2].astype(np.float32),
-        ego_fut_trajs[:, :2].astype(np.float32),
-        ego_his_trajs[:, :2].astype(np.float32),
-        ego_his_diff[:, :2].astype(np.float32),
-        ego_fut_masks[1:].astype(np.float32),
-        ego_his_masks[:-1].astype(np.float32),
-        command
-    )
-
-
-def get_ego_velocity(sample, nusc):
-    """Calculate ego vehicle velocity from consecutive frames."""
-    sd_rec = nusc.get('sample_data', sample['data']['LIDAR_TOP'])
-    pose_record = nusc.get('ego_pose', sd_rec['ego_pose_token'])
-
-    if sample['prev'] != '':
-        sample_prev = nusc.get('sample', sample['prev'])
-        sd_rec_prev = nusc.get('sample_data', sample_prev['data']['LIDAR_TOP'])
-        pose_record_prev = nusc.get('ego_pose', sd_rec_prev['ego_pose_token'])
-    else:
-        pose_record_prev = None
-
-    assert (pose_record_prev is not None), 'prev token is empty'
-
-    ego_pos = np.array(pose_record['translation'])
-    ego_pos_prev = np.array(pose_record_prev['translation'])
-    
-    # Velocity = distance / time (0.5s between frames at 2Hz)
-    ego_v = np.linalg.norm(ego_pos[:2] - ego_pos_prev[:2]) / 0.5
-    return ego_v
-
-
-def get_planning_instruction(ego_fut_diff, ego_fut_trajs, ego_his_diff, ego_his_trajs):
-    """Generate planning instruction based on trajectory analysis."""
-    meta_action = ""
-
-    # speed meta
-    constant_eps = 0.5
-    his_velos = np.linalg.norm(ego_his_diff, axis=1)
-    fut_velos = np.linalg.norm(ego_fut_diff, axis=1)
-    cur_velo = his_velos[-1]
-    end_velo = fut_velos[-1]
-
-    if cur_velo < constant_eps and end_velo < constant_eps:
-        speed_meta = "stop"
-    elif end_velo < constant_eps:
-        speed_meta = "a deceleration to zero"
-    elif np.abs(end_velo - cur_velo) < constant_eps:
-        speed_meta = "a constant speed"
-    else:
-        if cur_velo > end_velo:
-            if cur_velo > 2 * end_velo:
-                speed_meta = "a quick deceleration"
-            else:
-                speed_meta = "a deceleration"
-        else:
-            if end_velo > 2 * cur_velo:
-                speed_meta = "a quick acceleration"
-            else:
-                speed_meta = "an acceleration"
-    
-    # behavior_meta
-    if speed_meta == "stop":
-        meta_action += (speed_meta + "\n")
-        return meta_action.upper()
-    else:
-        forward_th = 2.0
-        lane_changing_th = 4.0
-        if (np.abs(ego_fut_trajs[:, 0]) < forward_th).all():
-            behavior_meta = "move forward"
-        else:
-            if ego_fut_trajs[-1, 0] < 0:  # left
-                if np.abs(ego_fut_trajs[-1, 0]) > lane_changing_th:
-                    behavior_meta = "turn left"
-                else:
-                    behavior_meta = "chane lane to left"
-            elif ego_fut_trajs[-1, 0] > 0:  # right
-                if np.abs(ego_fut_trajs[-1, 0]) > lane_changing_th:
-                    behavior_meta = "turn right"
-                else:
-                    behavior_meta = "change lane to right"
-            else:
-                raise ValueError(f"Undefined behaviors: {ego_fut_trajs}")
-                
-        meta_action += (behavior_meta + " with " + speed_meta)
-        return meta_action
 
 
 def extract_nuscenes_data(nusc, save_path, split='train', drivelm_path=None):
