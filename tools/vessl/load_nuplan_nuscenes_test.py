@@ -33,11 +33,12 @@ from time import perf_counter
 
 # Reuse helpers + constants from sibling script (same dir).
 sys.path.insert(0, str(Path(__file__).parent))
-from prepare_scaling_workspace import (  # noqa: E402
+from load_nuplan_nuscenes_mix_train import (  # noqa: E402
     open_streaming_tar,
     stream_extract_filtered,
     NUSC_SKIP_PREFIXES,
     used_fields,
+    sync_drivelm,
 )
 
 
@@ -343,6 +344,9 @@ def main():
         rc |= process_nuplan(args.parallelism, args.force, args.skip_raw, args.num_cameras)
     if args.dataset in ("nuscenes", "both"):
         rc |= process_nuscenes(args.parallelism, args.force, args.skip_raw, args.num_cameras)
+        # drivelm travels with nuScenes (JSON-only; sync even under --skip-raw)
+        print(f"\n========== drivelm sync ==========")
+        sync_drivelm()
     return rc
 
 

@@ -2,13 +2,15 @@
 
 For a chosen scale (10k/50k/100k/185k) and CoT model (e.g. Qwen2.4_VL_72B_Instruct_AWQ):
 
-  1. Stream-extract 4 sample-JSON tarballs from /backup/nuplan_nuscenes_train_mix/
-     into /data/nuplan_nuscenes_train_mix_<scale>/{nuPlan,nuScenes}/
+  1. Stream-extract the sample-JSON tarballs from /backup/nuplan_nuscenes_train_mix/
+     into /data/nuplan_nuscenes_train_mix_<scale>/{nuPlan,nuScenes}/. Which
+     tarballs are extracted depends on --datasets (nuplan / nuscenes / both).
   2. Walk those JSONs to build the set of raw image paths actually referenced.
-  3. Stream-extract raw nuPlan from /backup/raw_dataset_tarball/nuplan/ into the
-     shared /data/nuPlan/{navsim_logs,sensor_blobs}/trainval/, keeping only files
-     in the needed set that don't already exist on disk.
-  4. Same for nuScenes (only samples/CAM_<6>, plus v1.0-trainval/ + maps/).
+  3. When nuplan is selected: stream-extract raw nuPlan from
+     /backup/raw_dataset_tarball/nuplan/ into /data/nuPlan/{navsim_logs,sensor_blobs}/trainval/.
+  4. When nuscenes is selected: stream-extract raw nuScenes (samples/CAM_<6> +
+     v1.0-trainval/), AND copy /backup/drivelm/ → /data/drivelm/ (the nuScenes
+     DriveLM Q&A JSONs travel with the nuScenes hydration).
 
 Camera pruning is configurable via --num-cameras:
   - 3 (default): the cameras SFTDataset / RL inference actually read at training
@@ -36,11 +38,30 @@ from time import perf_counter
 BACKUP_SCALING_DIR = Path("/backup/nuplan_nuscenes_train_mix")
 BACKUP_RAW_NUPLAN  = Path("/backup/raw_dataset_tarball/nuplan")
 BACKUP_RAW_NUSC    = Path("/backup/raw_dataset_tarball/nuscenes")
+BACKUP_DRIVELM     = Path("/backup/drivelm")
 DATA_ROOT          = Path("/data")
 NUPLAN_RAW         = DATA_ROOT / "nuPlan"
 NUSC_RAW           = DATA_ROOT / "nuScenes"
+DRIVELM_DST        = DATA_ROOT / "drivelm"
 
 SCALES = ("10k", "50k", "100k", "185k")
+DATASETS = ("nuplan", "nuscenes", "both")
+
+
+def sync_drivelm():
+    """Copy /backup/drivelm/*.json → /data/drivelm/ (skips files already present
+    with matching size). nuScenes-only artifact; called from any flow that
+    hydrates nuScenes."""
+    DRIVELM_DST.mkdir(parents=True, exist_ok=True)
+    copied = skipped = 0
+    for src in sorted(BACKUP_DRIVELM.glob("*.json")):
+        dst = DRIVELM_DST / src.name
+        if dst.exists() and dst.stat().st_size == src.stat().st_size:
+            skipped += 1
+            continue
+        shutil.copy2(src, dst)
+        copied += 1
+    print(f"  drivelm: copied={copied}, skip-exist={skipped} → {DRIVELM_DST}")
 
 # nuScenes paths starting with any of these top-level prefixes are skipped
 # (we keep only the 3 needed cameras under samples/).
@@ -383,27 +404,39 @@ def main():
                    help="Per-dataset camera count. 3 = SFT/RL training set "
                         "(nuPlan F0+L1+R1, nuScenes front+front_left+front_right). "
                         "4 = adds back camera, matches CoT-annotation prompt set.")
+    p.add_argument("--datasets", choices=DATASETS, default="both",
+                   help="Which dataset(s) to hydrate. 'nuplan' or 'nuscenes' "
+                        "loads only that side; 'both' (default) loads the full "
+                        "mix. nuScenes also pulls /backup/drivelm/ → /data/drivelm/.")
     args = p.parse_args()
 
+    want_nuplan = args.datasets in ("nuplan", "both")
+    want_nusc   = args.datasets in ("nuscenes", "both")
+
     workspace = DATA_ROOT / f"nuplan_nuscenes_train_mix_{args.scale}"
-    print(f"workspace: {workspace}")
+    print(f"workspace: {workspace}  (datasets={args.datasets})")
     if args.force and workspace.exists():
         print(f"--force: removing {workspace}")
         shutil.rmtree(workspace)
     workspace.mkdir(parents=True, exist_ok=True)
-    (workspace / "nuPlan").mkdir(exist_ok=True)
-    (workspace / "nuScenes").mkdir(exist_ok=True)
+    if want_nuplan:
+        (workspace / "nuPlan").mkdir(exist_ok=True)
+    if want_nusc:
+        (workspace / "nuScenes").mkdir(exist_ok=True)
 
     # Phase 1
     print(f"\n=== Phase 1: sample-JSON tarballs → {workspace} ===")
     t1 = perf_counter()
-    bucket_specs = [
+    all_specs = [
         ("nuplan_nocot",   "nuplan",   workspace / "nuPlan"),
         ("nuplan_cot",     "nuplan",   workspace / "nuPlan"),
         ("nuscenes_nocot", "nuscenes", workspace / "nuScenes"),
         ("nuscenes_cot",   "nuscenes", workspace / "nuScenes"),
     ]
-    with ThreadPoolExecutor(max_workers=4) as pool:
+    bucket_specs = [s for s in all_specs
+                    if (s[1] == "nuplan" and want_nuplan)
+                    or (s[1] == "nuscenes" and want_nusc)]
+    with ThreadPoolExecutor(max_workers=max(1, len(bucket_specs))) as pool:
         futs = {}
         for bucket, ds, tgt in bucket_specs:
             tb = find_sample_tarball(args.scale, bucket, args.model)
@@ -419,6 +452,11 @@ def main():
     print(f"  copied {splits_src.name}")
     print(f"  Phase 1 elapsed: {perf_counter()-t1:.1f}s")
 
+    # drivelm travels with nuScenes (JSON-only artifact; sync even under --skip-raw)
+    if want_nusc:
+        print(f"\n=== drivelm sync: {BACKUP_DRIVELM} → {DRIVELM_DST} ===")
+        sync_drivelm()
+
     if args.skip_raw:
         print("\n--skip-raw set; done.")
         return 0
@@ -432,22 +470,24 @@ def main():
     print(f"  Phase 2 elapsed: {perf_counter()-t2:.1f}s")
 
     # Phase 3
-    print(f"\n=== Phase 3: raw nuPlan → /data/nuPlan/ ===")
-    t3 = perf_counter()
-    extract_raw_nuplan(nuplan_jpgs, nuplan_pkls, args.parallelism)
-    print(f"  Phase 3 elapsed: {perf_counter()-t3:.1f}s")
+    if want_nuplan:
+        print(f"\n=== Phase 3: raw nuPlan → /data/nuPlan/ ===")
+        t3 = perf_counter()
+        extract_raw_nuplan(nuplan_jpgs, nuplan_pkls, args.parallelism)
+        print(f"  Phase 3 elapsed: {perf_counter()-t3:.1f}s")
 
     # Phase 4
-    print(f"\n=== Phase 4: raw nuScenes → /data/nuScenes/ ===")
-    t4 = perf_counter()
-    extract_raw_nuscenes(nusc_jpgs, args.parallelism)
-    print(f"  Phase 4 elapsed: {perf_counter()-t4:.1f}s")
+    if want_nusc:
+        print(f"\n=== Phase 4: raw nuScenes → /data/nuScenes/ ===")
+        t4 = perf_counter()
+        extract_raw_nuscenes(nusc_jpgs, args.parallelism)
+        print(f"  Phase 4 elapsed: {perf_counter()-t4:.1f}s")
 
     # Verify
     print(f"\n=== Verification ===")
-    miss_np = sum(1 for p in nuplan_jpgs if not Path(p).exists())
-    miss_pk = sum(1 for p in nuplan_pkls if not Path(p).exists())
-    miss_ns = sum(1 for p in nusc_jpgs if not Path(p).exists())
+    miss_np = sum(1 for p in nuplan_jpgs if not Path(p).exists()) if want_nuplan else 0
+    miss_pk = sum(1 for p in nuplan_pkls if not Path(p).exists()) if want_nuplan else 0
+    miss_ns = sum(1 for p in nusc_jpgs   if not Path(p).exists()) if want_nusc   else 0
     print(f"  missing: nuplan jpgs={miss_np}, nuplan pkls={miss_pk}, nuscenes jpgs={miss_ns}")
     if miss_np or miss_pk or miss_ns:
         print("  WARNING: some needed files are missing")

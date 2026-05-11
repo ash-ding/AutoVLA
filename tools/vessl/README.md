@@ -11,11 +11,16 @@ Two entry points:
 
 | Script | Use for |
 |---|---|
-| `prepare_scaling_workspace.py` | Training:hydrate one of the 4-bucket train-mix scales (10k / 50k / 100k / 185k) |
-| `prepare_test_workspace.py`    | Eval / test:hydrate the nuPlan and/or nuScenes test set |
+| `load_nuplan_nuscenes_mix_train.py` | Training:hydrate one of the 4-bucket train-mix scales (10k / 50k / 100k / 185k) |
+| `load_nuplan_nuscenes_test.py`      | Eval / test:hydrate the nuPlan and/or nuScenes test set |
 
 Both are resumable — re-running with the same args is a no-op for files
 already on `/data`.
+
+Both support `--datasets {nuplan,nuscenes,both}` (mix-train) /
+`--dataset {nuplan,nuscenes,both}` (test) to hydrate a single side of the
+mix. Whenever nuScenes is selected, `/backup/drivelm/` is also synced to
+`/data/drivelm/` (DriveLM Q&A JSONs travel with the nuScenes side).
 
 ---
 
@@ -34,6 +39,9 @@ already on `/data`.
 │   └── test_samples_<N>.tar.zst
 ├── nuscenes_test/
 │   └── test_samples_<N>.tar.zst
+├── drivelm/
+│   ├── v1_1_train_nus.json                                  # ~185 MB
+│   └── v1_1_val_nus_q_only.json                             # ~10 MB
 └── raw_dataset_tarball/
     ├── nuplan/
     │   ├── openscene_metadata_trainval.tgz                      # train pkls
@@ -51,12 +59,15 @@ already on `/data`.
 
 ```
 /data/
-├── nuplan_nuscenes_train_mix_<scale>/                             # produced by prepare_scaling
-│   ├── nuPlan/{action_only_samples_*, nl_reasoning_samples_*}/
-│   ├── nuScenes/{action_only_samples_*, nl_reasoning_samples_*}/
+├── nuplan_nuscenes_train_mix_<scale>/                             # produced by load_nuplan_nuscenes_mix_train
+│   ├── nuPlan/{action_only_samples_*, nl_reasoning_samples_*}/    # present iff nuplan selected
+│   ├── nuScenes/{action_only_samples_*, nl_reasoning_samples_*}/  # present iff nuscenes selected
 │   └── scaling_<scale>_token_list.json
-├── nuplan_test/test_samples_<N>/                                  # produced by prepare_test
-├── nuscenes_test/test_samples_<N>/                                # produced by prepare_test
+├── nuplan_test/test_samples_<N>/                                  # produced by load_nuplan_nuscenes_test
+├── nuscenes_test/test_samples_<N>/                                # produced by load_nuplan_nuscenes_test
+├── drivelm/                                                       # synced whenever nuScenes is selected
+│   ├── v1_1_train_nus.json
+│   └── v1_1_val_nus_q_only.json
 ├── nuPlan/
 │   ├── navsim_logs/
 │   │   ├── trainval/<log>.pkl                                     # train pkls
@@ -81,12 +92,13 @@ Only the 3 cameras `SFTDataset` / `AutoVLAAgent` actually consume are extracted:
 | nuPlan   | `front_camera_paths`, `left_camera_paths`, `right_camera_paths` | `CAM_F0`, `CAM_L1`, `CAM_R1` |
 | nuScenes | `front_camera_paths`, `front_left_camera_paths`, `front_right_camera_paths` | `CAM_FRONT`, `CAM_FRONT_LEFT`, `CAM_FRONT_RIGHT` |
 
-Other cameras (back, lidar, radar, sweeps) are skipped during extraction
-to save disk and bandwidth, even when the JSON references them.
+`--num-cameras 4` adds the back camera (`CAM_B0` / `CAM_BACK`), matching
+the CoT-annotation prompt set. Other cameras (lidar, radar, sweeps) are
+always skipped to save disk and bandwidth.
 
 ---
 
-## `prepare_scaling_workspace.py`
+## `load_nuplan_nuscenes_mix_train.py`
 
 Extract one of the 4 scaling bundles into `/data/nuplan_nuscenes_train_mix_<scale>/`.
 
@@ -94,36 +106,46 @@ Extract one of the 4 scaling bundles into `/data/nuplan_nuscenes_train_mix_<scal
 
 | Flag | Required | Default | Meaning |
 |---|---|---|---|
-| `--scale {10k,50k,100k,185k}` | yes | — | Which scaling bundle to hydrate. Hard-restricted to these four. |
-| `--model <name>` | yes | — | Substring matching the nuPlan CoT tarball name. Currently only `Qwen2.4_VL_72B_Instruct_AWQ`. |
+| `--scale {10k,50k,100k,185k}` | yes | — | Which scaling bundle to hydrate. |
+| `--model <name>` | yes | — | Substring matching the nuPlan CoT tarball name (e.g. `Qwen2.4_VL_72B_Instruct_AWQ`). |
+| `--datasets {nuplan,nuscenes,both}` | no | `both` | Restrict hydration to a single side of the mix. `nuscenes` (or `both`) also syncs `/backup/drivelm/` → `/data/drivelm/`. |
 | `--parallelism N` | no | 8 | Concurrent tarball streams. 8 is optimal — diminishing returns past that. |
+| `--num-cameras {3,4}` | no | 3 | 3 = training set; 4 = adds back camera, matches CoT-annotation prompt set. |
 | `--force` | no | false | `rm -rf` the per-scale `/data/nuplan_nuscenes_train_mix_<scale>/` before starting. |
-| `--skip-raw` | no | false | Only extract the 4 sample-JSON tarballs (Phase 1). Skip raw image / pkl extraction (Phase 2-4). Useful when `/data/nuPlan` and `/data/nuScenes` are already hydrated by an earlier scale. |
+| `--skip-raw` | no | false | Only extract the sample-JSON tarballs (Phase 1) and sync drivelm if nuScenes is selected. Skip raw image / pkl extraction (Phase 2-4). Useful when `/data/nuPlan` and `/data/nuScenes` are already hydrated by an earlier scale. |
 
 ### Phases
 
-1. **Phase 1** — extract the 4 sample-JSON tarballs (parallel) into the per-scale workspace.
+1. **Phase 1** — extract the selected sample-JSON tarballs (parallel) into the per-scale workspace. (`drivelm` sync runs here too if nuScenes is selected.)
 2. **Phase 2** — walk extracted JSONs to collect needed `<jpg>` and `<pkl>` paths.
-3. **Phase 3** — selectively extract nuPlan jpgs (200 cam tarballs) + pkls (1 metadata tarball) into `/data/nuPlan/{sensor_blobs,navsim_logs}/trainval/`.
-4. **Phase 4** — selectively extract nuScenes jpgs (10 trainval blobs + 1 meta tarball) into `/data/nuScenes/`.
+3. **Phase 3** — selectively extract nuPlan jpgs (200 cam tarballs) + pkls (1 metadata tarball) into `/data/nuPlan/{sensor_blobs,navsim_logs}/trainval/`. Skipped when `--datasets nuscenes`.
+4. **Phase 4** — selectively extract nuScenes jpgs (10 trainval blobs + 1 meta tarball) into `/data/nuScenes/`. Skipped when `--datasets nuplan`.
 
 ### Typical commands
 
 ```bash
 # Hydrate the 10k workspace (smallest, fastest — for smoke test)
-python tools/vessl/prepare_scaling_workspace.py \
+python tools/vessl/load_nuplan_nuscenes_mix_train.py \
     --scale 10k --model Qwen2.4_VL_72B_Instruct_AWQ
 
 # Largest workspace (full 185k mix) — takes ~30-40 min on cold /data
-python tools/vessl/prepare_scaling_workspace.py \
+python tools/vessl/load_nuplan_nuscenes_mix_train.py \
     --scale 185k --model Qwen2.4_VL_72B_Instruct_AWQ
 
+# Only nuPlan side (no nuScenes JSONs, no drivelm sync, skip Phase 4)
+python tools/vessl/load_nuplan_nuscenes_mix_train.py \
+    --scale 50k --model Qwen2.4_VL_72B_Instruct_AWQ --datasets nuplan
+
+# Only nuScenes side (also syncs drivelm)
+python tools/vessl/load_nuplan_nuscenes_mix_train.py \
+    --scale 50k --model Qwen2.4_VL_72B_Instruct_AWQ --datasets nuscenes
+
 # Just the JSONs (skip raw); raw assumed already hydrated from a previous run
-python tools/vessl/prepare_scaling_workspace.py \
+python tools/vessl/load_nuplan_nuscenes_mix_train.py \
     --scale 50k --model Qwen2.4_VL_72B_Instruct_AWQ --skip-raw
 
 # Reset and re-extract the 100k workspace
-python tools/vessl/prepare_scaling_workspace.py \
+python tools/vessl/load_nuplan_nuscenes_mix_train.py \
     --scale 100k --model Qwen2.4_VL_72B_Instruct_AWQ --force
 ```
 
@@ -138,6 +160,7 @@ python tools/vessl/prepare_scaling_workspace.py \
 
 (Phase 3-4 mostly skip-exist after the first scale runs, since
 `/data/nuPlan` and `/data/nuScenes` are shared across scales.)
+DriveLM sync (~194 MB, 2 JSONs) takes a few seconds the first time and is a no-op thereafter.
 
 ### Disk footprint (per scale, isolated)
 
@@ -153,9 +176,10 @@ data: nuPlan jpg avg ≈ 217 KB, nuPlan pkl avg ≈ 10 MB, nuScenes jpg avg
 | 100k | 1,076,772 (~223 GB)| 1,250 (~12 GB) | 57,954 (~8.8 GB) | 604 MB | **~245 GB** |
 | 185k | 1,995,384 (~412 GB)| 1,250 (~12 GB) | 63,390 (~9.6 GB) | 1.1 GB | **~435 GB** |
 
-Plus a shared one-off cost of **~4 GB** for nuPlan maps (1.4 GB),
-nuScenes `v1.0-trainval/` metadata (2.5 GB), nuScenes maps (6 MB) — paid
-on the first scale run, free thereafter.
+Plus a shared one-off cost of **~4.2 GB** for nuPlan maps (1.4 GB),
+nuScenes `v1.0-trainval/` metadata (2.5 GB), nuScenes maps (6 MB), and
+DriveLM JSONs (~194 MB) — paid on the first run that hydrates each side,
+free thereafter.
 
 ⚠️ Cumulative cost when stacking scales is **non-additive** — bigger
 scales are strict supersets of smaller ones for sample JSONs (`10k ⊂ 50k
@@ -164,7 +188,7 @@ from 10k → 185k adds **~400 GB**, not 565 GB.
 
 ---
 
-## `prepare_test_workspace.py`
+## `load_nuplan_nuscenes_test.py`
 
 Hydrate the nuPlan navtest set, the nuScenes val ("test") set, or both
 into `/data/{nuplan,nuscenes}_test/`.
@@ -173,10 +197,11 @@ into `/data/{nuplan,nuscenes}_test/`.
 
 | Flag | Required | Default | Meaning |
 |---|---|---|---|
-| `--dataset {nuplan,nuscenes,both}` | yes | — | Which test set to hydrate. `both` does nuPlan first, then nuScenes. |
+| `--dataset {nuplan,nuscenes,both}` | yes | — | Which test set to hydrate. `both` does nuPlan first, then nuScenes. `nuscenes` (or `both`) also syncs `/backup/drivelm/` → `/data/drivelm/`. |
 | `--parallelism N` | no | 8 | Concurrent tarball streams. |
+| `--num-cameras {3,4}` | no | 3 | Per-dataset camera count. |
 | `--force` | no | false | `rm -rf` the per-dataset test workspace before starting. |
-| `--skip-raw` | no | false | Only extract the JSON tarball (Phase 1). Skip pkl/jpg extraction. |
+| `--skip-raw` | no | false | Only extract the JSON tarball (Phase 1). Skip pkl/jpg extraction. DriveLM sync still runs if nuScenes is selected. |
 
 There is **no `--scale`, no `--model`, no `--run-preprocess`** — sample
 JSONs are pre-baked in `/backup/{nuplan,nuscenes}_test/test_samples_*.tar.zst`,
@@ -190,23 +215,25 @@ and the script's only job is data movement.
    - **nuPlan**: 32 `openscene_sensor_test_camera_*.tgz` → `/data/nuPlan/sensor_blobs/test/`. Plus `openscene_metadata_test.tgz` → `/data/nuPlan/navsim_logs/test/`.
    - **nuScenes**: 10 `v1.0-trainval[0-9]*_blobs.tgz` → `/data/nuScenes/samples/CAM_*/` (val frames live in trainval blobs). Plus `v1.0-trainval_meta.tgz` → `/data/nuScenes/v1.0-trainval/`.
 
+After the nuScenes phases, `/backup/drivelm/` is synced to `/data/drivelm/`.
+
 ### Typical commands
 
 ```bash
-# Hydrate both test sets in one go (~22 min cold)
-python tools/vessl/prepare_test_workspace.py --dataset both
+# Hydrate both test sets in one go (~22 min cold) + drivelm
+python tools/vessl/load_nuplan_nuscenes_test.py --dataset both
 
-# nuPlan navtest only
-python tools/vessl/prepare_test_workspace.py --dataset nuplan
+# nuPlan navtest only (no drivelm)
+python tools/vessl/load_nuplan_nuscenes_test.py --dataset nuplan
 
-# nuScenes val ("test") only — raw lives in trainval blobs
-python tools/vessl/prepare_test_workspace.py --dataset nuscenes
+# nuScenes val ("test") only — raw lives in trainval blobs; also syncs drivelm
+python tools/vessl/load_nuplan_nuscenes_test.py --dataset nuscenes
 
 # Just the JSON workspaces, no raw extraction
-python tools/vessl/prepare_test_workspace.py --dataset both --skip-raw
+python tools/vessl/load_nuplan_nuscenes_test.py --dataset both --skip-raw
 
 # Force re-extraction
-python tools/vessl/prepare_test_workspace.py --dataset nuplan --force
+python tools/vessl/load_nuplan_nuscenes_test.py --dataset nuplan --force
 ```
 
 ### Time estimates (cold cache, parallelism=8)
@@ -235,8 +262,8 @@ the train workspace is already hydrated, **most val jpgs are free**
 frames are temporally adjacent but distinct from train frames).
 
 If you only need test sets (no training), **you do not need to run
-`prepare_scaling_workspace.py`** — `prepare_test_workspace.py` is fully
-self-contained.
+`load_nuplan_nuscenes_mix_train.py`** — `load_nuplan_nuscenes_test.py` is
+fully self-contained.
 
 ---
 
@@ -246,13 +273,13 @@ Common scenarios, fresh `/data`:
 
 | Goal | What to run | `/data` needed |
 |---|---|---|
-| 10k SFT only | `prepare_scaling --scale 10k` | **~40 GB** |
-| 50k SFT only | `prepare_scaling --scale 50k` | **~134 GB** |
-| 100k SFT only | `prepare_scaling --scale 100k` | **~250 GB** |
-| 185k SFT only | `prepare_scaling --scale 185k` | **~440 GB** |
-| Full scaling sweep (10k+50k+100k+185k) | 4 × `prepare_scaling` | **~440 GB** (185k subsumes the rest) |
-| nuPlan navtest eval only | `prepare_test --dataset nuplan` | **~17 GB** (incl. nuPlan maps + nusc meta) |
-| nuScenes test eval only | `prepare_test --dataset nuscenes` | **~6 GB** (incl. nusc meta + maps) |
+| 10k SFT only | `load_nuplan_nuscenes_mix_train --scale 10k` | **~40 GB** |
+| 50k SFT only | `load_nuplan_nuscenes_mix_train --scale 50k` | **~134 GB** |
+| 100k SFT only | `load_nuplan_nuscenes_mix_train --scale 100k` | **~250 GB** |
+| 185k SFT only | `load_nuplan_nuscenes_mix_train --scale 185k` | **~440 GB** |
+| Full scaling sweep (10k+50k+100k+185k) | 4 × `load_nuplan_nuscenes_mix_train` | **~440 GB** (185k subsumes the rest) |
+| nuPlan navtest eval only | `load_nuplan_nuscenes_test --dataset nuplan` | **~17 GB** (incl. nuPlan maps + nusc meta) |
+| nuScenes test eval only | `load_nuplan_nuscenes_test --dataset nuscenes` | **~6 GB** (incl. nusc meta + maps + drivelm) |
 | 10k SFT + both test sets | both scripts | **~55 GB** |
 | 185k SFT + both test sets | both scripts | **~455 GB** |
 
@@ -287,12 +314,12 @@ source .envrc
 
 # === On a fresh /data (or after eviction) ===
 
-# 1. Pick a training scale and hydrate it
-python tools/vessl/prepare_scaling_workspace.py \
+# 1. Pick a training scale and hydrate it (both nuPlan + nuScenes + drivelm)
+python tools/vessl/load_nuplan_nuscenes_mix_train.py \
     --scale 10k --model Qwen2.4_VL_72B_Instruct_AWQ
 
-# 2. Hydrate test sets (nuPlan + nuScenes)
-python tools/vessl/prepare_test_workspace.py --dataset both
+# 2. Hydrate test sets (nuPlan + nuScenes + drivelm)
+python tools/vessl/load_nuplan_nuscenes_test.py --dataset both
 
 # 3. Train
 python tools/run_sft.py --config training/qwen2.5-vl-3B-mix-sft-10k-action-only
@@ -300,8 +327,13 @@ python tools/run_sft.py --config training/qwen2.5-vl-3B-mix-sft-10k-action-only
 # === Switching scales ===
 # Phase 3-4 will mostly skip (raw shared across scales). Only the new
 # scale's sample JSONs get extracted (~30-90 s).
-python tools/vessl/prepare_scaling_workspace.py \
+python tools/vessl/load_nuplan_nuscenes_mix_train.py \
     --scale 50k --model Qwen2.4_VL_72B_Instruct_AWQ
+
+# === Single-side hydration ===
+# nuPlan-only train mix at a fresh /data (no nuScenes work, no drivelm)
+python tools/vessl/load_nuplan_nuscenes_mix_train.py \
+    --scale 100k --model Qwen2.4_VL_72B_Instruct_AWQ --datasets nuplan
 ```
 
 ## Troubleshooting
