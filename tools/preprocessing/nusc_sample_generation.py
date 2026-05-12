@@ -67,15 +67,21 @@ def quart_to_rpy(qua):
     return roll, pitch, yaw
 
 
-def extract_nuscenes_data(nusc, save_path, split='train', drivelm_path=None):
+def extract_nuscenes_data(nusc, save_path, split='train', drivelm_path=None,
+                          cot_output_dir=None, nocot_output_dir=None):
     """
     Extract data from NuScenes dataset.
-    
+
     Args:
         nusc: NuScenes instance
-        save_path: Output directory for JSON files
+        save_path: Fallback output directory for JSON files. When cot/nocot
+            override paths are both supplied, this is only used as a sentinel.
         split: 'train' or 'val'
         drivelm_path: Optional path to DriveLM annotations
+        cot_output_dir: Optional override for DriveLM-derived CoT JSONs.
+            Bypasses the default '<save_path>/nl_reasoning_samples/' subdir.
+        nocot_output_dir: Optional override for no-CoT JSONs.
+            Bypasses the default '<save_path>/action_only_samples/' subdir.
     """
     # Get scene splits
     train_scenes = splits.train
@@ -97,7 +103,33 @@ def extract_nuscenes_data(nusc, save_path, split='train', drivelm_path=None):
     ])
 
     scene_set = train_scene_tokens if split == 'train' else val_scene_tokens
-    
+
+    # Output layout. Per stream, the precedence is:
+    #   explicit override (--cot_output_dir / --nocot_output_dir)
+    #     > '<save_path>/nl_reasoning_samples' or '.../action_only_samples' subdir, if drivelm_path is set
+    #     > flat 'save_path' (single no-CoT stream).
+    # Overrides let downstream callers land the two streams into independently-named
+    # sibling dirs without the default subdir layer.
+    if cot_output_dir:
+        cot_save_path = cot_output_dir
+    elif drivelm_path:
+        cot_save_path = os.path.join(save_path, 'nl_reasoning_samples')
+    else:
+        cot_save_path = save_path
+
+    if nocot_output_dir:
+        nocot_save_path = nocot_output_dir
+    elif drivelm_path:
+        nocot_save_path = os.path.join(save_path, 'action_only_samples')
+    else:
+        nocot_save_path = save_path
+
+    os.makedirs(cot_save_path, exist_ok=True)
+    os.makedirs(nocot_save_path, exist_ok=True)
+    if drivelm_path:
+        print(f"CoT samples (DriveLM-derived) -> {cot_save_path}")
+    print(f"No-CoT samples                 -> {nocot_save_path}")
+
     # Load DriveLM data if provided
     drivelm_samples = set()
     if drivelm_path and os.path.exists(drivelm_path):
@@ -105,7 +137,7 @@ def extract_nuscenes_data(nusc, save_path, split='train', drivelm_path=None):
         with open(drivelm_path, 'r') as f:
             drivelm_data = json.load(f)
         drivelm_samples = process_drivelm_data(
-            nusc, drivelm_data, scene_set, save_path
+            nusc, drivelm_data, scene_set, cot_save_path
         )
     
     # Process raw NuScenes samples
@@ -201,12 +233,12 @@ def extract_nuscenes_data(nusc, save_path, split='train', drivelm_path=None):
 
             # Save to JSON
             json_data = convert_to_json_serializable(sample_data)
-            output_path = os.path.join(save_path, f"{frame_id}.json")
+            output_path = os.path.join(nocot_save_path, f"{frame_id}.json")
             with open(output_path, 'w') as f:
                 json.dump(json_data, f, indent=2)
-            
+
             processed_count += 1
-    
+
     print(f"Processed {processed_count} samples, skipped {skipped_count} samples")
     return processed_count
 
@@ -386,8 +418,9 @@ def main():
         help="Path to NuScenes dataset root directory"
     )
     parser.add_argument(
-        "--output_dir", type=str, required=True,
-        help="Output directory for preprocessed JSON files"
+        "--output_dir", type=str, default=None,
+        help="Output directory for preprocessed JSON files. Required unless "
+             "both --cot_output_dir and --nocot_output_dir are supplied."
     )
     parser.add_argument(
         "--split", type=str, default="train", choices=["train", "val"],
@@ -401,10 +434,27 @@ def main():
         "--drivelm_path", type=str, default=None,
         help="Optional path to DriveLM annotations JSON file"
     )
+    parser.add_argument(
+        "--cot_output_dir", type=str, default=None,
+        help="Override: write DriveLM-derived CoT JSONs here instead of "
+             "<output_dir>/nl_reasoning_samples/. Only meaningful with --drivelm_path."
+    )
+    parser.add_argument(
+        "--nocot_output_dir", type=str, default=None,
+        help="Override: write no-CoT JSONs here instead of "
+             "<output_dir>/action_only_samples/ (or <output_dir> in the flat case)."
+    )
     args = parser.parse_args()
 
-    # Create output directory
-    os.makedirs(args.output_dir, exist_ok=True)
+    if args.output_dir is None and not (args.cot_output_dir and args.nocot_output_dir):
+        parser.error(
+            "--output_dir is required unless BOTH --cot_output_dir and "
+            "--nocot_output_dir are provided."
+        )
+
+    # Create output directory (parent placeholder; per-stream dirs are created inside extract_nuscenes_data)
+    if args.output_dir is not None:
+        os.makedirs(args.output_dir, exist_ok=True)
 
     # Initialize NuScenes
     print(f"Loading NuScenes {args.version} from {args.nuscenes_path}")
@@ -414,12 +464,20 @@ def main():
     print(f"Processing {args.split} split...")
     extract_nuscenes_data(
         nusc=nusc,
-        save_path=args.output_dir,
+        save_path=args.output_dir or "",
         split=args.split,
-        drivelm_path=args.drivelm_path
+        drivelm_path=args.drivelm_path,
+        cot_output_dir=args.cot_output_dir,
+        nocot_output_dir=args.nocot_output_dir,
     )
 
-    print(f"Done! Preprocessed data saved to {args.output_dir}")
+    if args.cot_output_dir or args.nocot_output_dir:
+        if args.cot_output_dir:
+            print(f"Done! CoT samples saved to {args.cot_output_dir}")
+        if args.nocot_output_dir:
+            print(f"Done! No-CoT samples saved to {args.nocot_output_dir}")
+    else:
+        print(f"Done! Preprocessed data saved to {args.output_dir}")
 
 
 if __name__ == "__main__":
