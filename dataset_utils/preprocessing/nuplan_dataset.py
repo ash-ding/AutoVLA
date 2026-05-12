@@ -22,11 +22,30 @@ CAM_LIST = ['front', 'front_left', 'front_right',
             'back', 'back_left', 'back_right', 'left', 'right']
 
 class NuplanCoTAnnotationDataset(Dataset):
-    def __init__(self, config, processor=None):
+    def __init__(self, config, processor=None, *, build_messages=None):
+        """
+        Args:
+            config: dataset config (paths, scene_filter, annotation_backend, ...).
+            processor: HF AutoProcessor for vLLM tokenization. None for OpenAI / no-CoT.
+            build_messages: explicit override for "do we decode images + build the
+                Qwen messages list?". If None (default), auto-detect:
+                - vLLM (processor != None) → True
+                - OpenAI backend (config['annotation_backend'] == 'openai') → True
+                - otherwise (e.g. no-CoT) → False
+                Pass build_messages=False from no-CoT scripts to skip the per-frame
+                JPEG decode entirely, even if a processor was loaded for some other
+                reason.
+        """
         self.data_path = config['dataset_path']
         self.data_folders = glob.glob(self.data_path + '/*/*')
         self.processor = processor
-         
+
+        if build_messages is None:
+            backend = str(config.get('annotation_backend', '')).lower()
+            self.needs_vision = (processor is not None) or (backend == 'openai')
+        else:
+            self.needs_vision = bool(build_messages)
+
         if config['scene_filter'] is None:
             scene_filter = SceneFilter(
                 num_history_frames=4, # number of past frames to be extracted, frames are at 2Hz
@@ -35,17 +54,14 @@ class NuplanCoTAnnotationDataset(Dataset):
             )
         else:
             scene_filter: SceneFilter = instantiate(OmegaConf.load(config['scene_filter']))
-        
+
         self.interval_length = 0.5
         trajectory_sampling = TrajectorySampling(time_horizon=5, interval_length=self.interval_length)
         self._agent = VlaAgent(trajectory_sampling=trajectory_sampling)
 
-        # When no processor is provided (no-CoT preprocessing) we only need camera
-        # paths/intrinsics — skip the per-frame JPEG decode that would otherwise run
-        # for every enabled camera in Cameras.from_camera_dict.
         sensor_config = replace(
             self._agent.get_sensor_config(),
-            decode_images=(processor is not None),
+            decode_images=self.needs_vision,
         )
 
         self._scene_loader = SceneLoader(
@@ -109,9 +125,10 @@ class NuplanCoTAnnotationDataset(Dataset):
         token = self._scene_loader.tokens[idx]
         inputs = {'token': token}
 
-        # VLM-specific work (pixel decoding, base64 encoding, message templating, tokenization).
-        # Skipped when processor is None (no-CoT preprocessing path).
-        if self.processor is not None:
+        # VLM-specific work (pixel decoding, base64 encoding, message templating).
+        # `needs_vision` is True for both vLLM and OpenAI backends; False for the
+        # no-CoT path that only needs camera paths/metadata.
+        if self.needs_vision:
             front_camera_1 = images['front_camera'][0].image
             front_camera_2 = images['front_camera'][1].image
             front_camera_3 = images['front_camera'][2].image
@@ -234,31 +251,34 @@ class NuplanCoTAnnotationDataset(Dataset):
             ]
             inputs['messages'] = messages
 
-            process_vision_kwargs = {
-                "return_video_kwargs": True,
-            }
-            patch_size = getattr(getattr(self.processor, "image_processor", None), "patch_size", None)
-            if patch_size is not None:
-                process_vision_kwargs["image_patch_size"] = patch_size
+            # Processor-driven tokenization is vLLM-only; OpenAI backend
+            # consumes the raw Qwen-format messages directly.
+            if self.processor is not None:
+                process_vision_kwargs = {
+                    "return_video_kwargs": True,
+                }
+                patch_size = getattr(getattr(self.processor, "image_processor", None), "patch_size", None)
+                if patch_size is not None:
+                    process_vision_kwargs["image_patch_size"] = patch_size
 
-            try:
-                image_inputs, video_inputs, video_kwargs = process_vision_info(
-                    messages,
-                    return_video_metadata=True,
-                    **process_vision_kwargs,
+                try:
+                    image_inputs, video_inputs, video_kwargs = process_vision_info(
+                        messages,
+                        return_video_metadata=True,
+                        **process_vision_kwargs,
+                    )
+                except TypeError:
+                    image_inputs, video_inputs, video_kwargs = process_vision_info(
+                        messages,
+                        **process_vision_kwargs,
+                    )
+                text = self.processor.apply_chat_template(
+                    messages, tokenize=False, add_generation_prompt=True, add_vision_id=True
                 )
-            except TypeError:
-                image_inputs, video_inputs, video_kwargs = process_vision_info(
-                    messages,
-                    **process_vision_kwargs,
-                )
-            text = self.processor.apply_chat_template(
-                messages, tokenize=False, add_generation_prompt=True, add_vision_id=True
-            )
-            inputs['text'] = text
-            inputs['image_inputs'] = image_inputs
-            inputs['video_inputs'] = video_inputs
-            inputs['mm_processor_kwargs'] = video_kwargs or {}
+                inputs['text'] = text
+                inputs['image_inputs'] = image_inputs
+                inputs['video_inputs'] = video_inputs
+                inputs['mm_processor_kwargs'] = video_kwargs or {}
 
         for side in CAM_LIST:
             camera_key = f"{side}_camera"

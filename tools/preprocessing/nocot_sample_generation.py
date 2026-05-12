@@ -127,8 +127,14 @@ if __name__ == "__main__":
     processor = AutoProcessor.from_pretrained(pretrained_model_path, use_fast=True) if pretrained_model_path else None
     dataset_name = config.get("dataset_name", "")
 
+    # No-CoT path never needs decoded camera bytes — output JSON only stores raw
+    # paths + scene metadata. nuplan_dataset takes an explicit build_messages flag
+    # so the per-frame JPEG decode is skipped regardless of whether
+    # `pretrained_model_path` is set in the config. waymo/nuscenes datasets still
+    # use the implicit gate (processor=None ⇒ no decode); apply the same refactor
+    # there if openai-backend + waymo/nuscenes is ever needed.
     if dataset_name == "nuplan":
-        dataset = NuplanCoTAnnotationDataset(config, processor)
+        dataset = NuplanCoTAnnotationDataset(config, processor, build_messages=False)
         collator = NuplanDataCollator(processor)
     elif dataset_name == "waymo":
         from dataset_utils.preprocessing.waymo_e2e_dataset import WaymoE2ECoTAnnotationDataset, DataCollator as WaymoDataCollator
