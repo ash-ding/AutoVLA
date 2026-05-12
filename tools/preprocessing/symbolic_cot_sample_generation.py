@@ -563,13 +563,22 @@ if __name__ == "__main__":
         "--dp_size",
         type=int,
         default=1,
-        help="Number of DP replicas to fan out via subprocess. 1 = single process (default).",
+        help="Number of DP replicas to fan out via subprocess. vLLM only — "
+             "openai backend uses --concurrency (in-process asyncio) instead.",
     )
     parser.add_argument(
         "--tp_size",
         type=int,
         default=None,
         help="Override config's tensor_parallel_size. Requires --backend vllm.",
+    )
+    parser.add_argument(
+        "--concurrency",
+        type=int,
+        default=None,
+        help="OpenAI backend: number of concurrent in-flight API requests via "
+             "asyncio.gather. Default from config['concurrency'] or 10. Ignored "
+             "for vllm backend (use --dp_size there).",
     )
     args = parser.parse_args()
 
@@ -581,11 +590,21 @@ if __name__ == "__main__":
     rlib_dir = args.rlib_dir or config.get('rlib_dir', './RLIB')
     path_prefix_maps = parse_path_prefix_maps(args.path_prefix_map)
 
-    # --- Validation: --tp_size, --dp_size, manual sharding interactions ---
+    # --- Validation: --tp_size, --dp_size, --concurrency, manual sharding interactions ---
     if args.tp_size is not None and backend != 'vllm':
         sys.exit(f"--tp_size requires --backend vllm; current backend is '{backend}'.")
     if args.dp_size < 1:
         sys.exit(f"--dp_size must be >= 1, got {args.dp_size}.")
+    if args.dp_size > 1 and backend == 'openai':
+        sys.exit(
+            f"--dp_size {args.dp_size} requested with openai backend, but the openai "
+            "backend uses in-process asyncio concurrency instead of subprocess DP. "
+            f"Use --concurrency {args.dp_size} (or higher) for I/O-parallel API calls."
+        )
+    if args.concurrency is not None and backend != 'openai':
+        sys.exit(f"--concurrency requires --backend openai; current backend is '{backend}'.")
+    if args.concurrency is not None and args.concurrency < 1:
+        sys.exit(f"--concurrency must be >= 1, got {args.concurrency}.")
     if args.dp_size > 1 and (args.num_parts > 1 or args.sample_num != 1):
         sys.exit(
             "--dp_size is mutually exclusive with manual sharding via --num_parts/--sample_num. "
@@ -800,16 +819,35 @@ if __name__ == "__main__":
                 f"saved={saved_count} valid={stats['valid']} parse_ok={stats['parse_success']} token={last_token}"
             )
     else:
-        for idx in selected_indices:
-            sample = val_dataset[idx]
-            cot_outputs = model.vlm_inference(sample)
-            cot_text = cot_outputs[0] if cot_outputs and len(cot_outputs) > 0 else ""
-            token = save_symbolic_sample(sample, cot_text)
-            saved_count += 1
-            progress.update(1)
-            progress.set_postfix_str(
-                f"saved={saved_count} valid={stats['valid']} parse_ok={stats['parse_success']} token={token}"
-            )
+        # OpenAI backend: in-process asyncio concurrency. Network I/O bound
+        # so subprocess-level DP is wasteful — one process with N in-flight
+        # requests via asyncio.gather is the right shape.
+        import asyncio
+
+        concurrency = args.concurrency if args.concurrency is not None else int(config.get('concurrency', 10))
+        print(f"OpenAI backend: running asyncio.gather with concurrency={concurrency}.")
+        sem = asyncio.Semaphore(concurrency)
+
+        async def process_one(idx):
+            async with sem:
+                sample = val_dataset[idx]
+                cot_outputs = await model.vlm_inference_async(sample)
+                cot_text = cot_outputs[0] if cot_outputs and len(cot_outputs) > 0 else ""
+                return sample, cot_text
+
+        async def run_all():
+            global saved_count
+            tasks = [asyncio.create_task(process_one(idx)) for idx in selected_indices]
+            for coro in asyncio.as_completed(tasks):
+                sample, cot_text = await coro
+                token = save_symbolic_sample(sample, cot_text)
+                saved_count += 1
+                progress.update(1)
+                progress.set_postfix_str(
+                    f"saved={saved_count} valid={stats['valid']} parse_ok={stats['parse_success']} token={token}"
+                )
+
+        asyncio.run(run_all())
 
     progress.close()
 
