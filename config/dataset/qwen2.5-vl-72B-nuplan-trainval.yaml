@@ -1,0 +1,20 @@
+name: qwen2.5-vl-72B-nuplan-trainval
+description: NL CoT preprocessing for the full nuPlan trainval split with Qwen2.5-VL-72B-AWQ. Reads sensor blobs / navsim logs from the unified /data/nuPlan/{navsim_logs,sensor_blobs}/trainval layout.
+
+# model
+pretrained_model_path: /backup/autovla_models/Qwen2.5-VL-72B-Instruct-AWQ
+tensor_parallel_size: 1
+
+# vLLM / dataloader (tune down for 1xL40S if OOM; 8gpu-tp1.yaml defaults kept as a starting point)
+batch_size: 16
+max_num_seqs: 16
+max_model_len: 16384
+prefetch_factor: 4
+num_workers: 4
+
+# dataset
+dataset_name: nuplan
+# 'placeholder' is replaced with 'navsim_logs' / 'sensor_blobs' at runtime by nuplan_dataset.py.
+# Final paths: /data/nuPlan/navsim_logs/trainval/<log>.pkl, /data/nuPlan/sensor_blobs/trainval/<log>/<cam>/<jpg>
+dataset_path: /data/nuPlan/placeholder/trainval
+scene_filter: /root/code/AutoVLA/navsim/navsim/planning/script/config/common/train_test_split/scene_filter/all_scenes.yaml

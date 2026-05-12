@@ -1,0 +1,21 @@
+name: symbolic-cot-gpt4o-mini-nuscenes-trainval
+description: Symbolic CoT preprocessing for nuScenes trainval via GPT-4o-mini + RLIB.
+
+# Annotation backend
+annotation_backend: openai
+api_model: gpt-4o-mini
+# api_key: null  # uses OPENAI_API_KEY env var
+max_tokens: 1200
+temperature: 0
+image_detail: low
+
+# RLIB
+rlib_dir: ./RLIB
+
+# Dataset (NuscenesCoTAnnotationDataset reads: dataset_path, version, split, num_history_frames, num_future_frames)
+dataset_name: nuscenes
+dataset_path: /data/nuScenes
+version: v1.0-trainval
+split: train
+num_history_frames: 4
+num_future_frames: 16

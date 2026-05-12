@@ -1,0 +1,19 @@
+name: symbolic-cot-gpt4o-mini-nuplan-trainval
+description: Symbolic CoT preprocessing for full nuPlan trainval via GPT-4o-mini + RLIB.
+
+# Annotation backend
+annotation_backend: openai
+api_model: gpt-4o-mini
+# api_key: null  # uses OPENAI_API_KEY env var
+max_tokens: 1200
+temperature: 0
+image_detail: low
+
+# RLIB
+rlib_dir: ./RLIB
+
+# Dataset
+dataset_name: nuplan
+# 'placeholder' is replaced with 'navsim_logs' / 'sensor_blobs' at runtime by nuplan_dataset.py.
+dataset_path: /data/nuPlan/placeholder/trainval
+scene_filter: /root/code/AutoVLA/navsim/navsim/planning/script/config/common/train_test_split/scene_filter/all_scenes.yaml
