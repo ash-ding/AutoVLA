@@ -219,15 +219,30 @@ class SymbolicPromptWrapper:
         if self.nl_cot_dir:
             token = sample.get("token", "")
             nl_cot_path = os.path.join(self.nl_cot_dir, f"{token}.json")
-            if os.path.exists(nl_cot_path):
+            if not os.path.exists(nl_cot_path):
+                print(
+                    f"[nl-cot] WARN: no JSON for token {token!r} at {nl_cot_path}; "
+                    f"falling back to fut_ego_action and omitting NL reference block.",
+                    file=sys.stderr, flush=True,
+                )
+            else:
                 with open(nl_cot_path) as f:
                     nl_data = json.load(f)
                 nl_cot_ref_raw = nl_data.get("cot_output", "")
                 # nl CoT may be a list (nuScenes/DriveLM 5-field) or a string (nuPlan/VLM).
+                # Whitespace-only content (e.g. list of empty strings) is treated as empty so
+                # we don't inject a blank "REFERENCE" block into the symbolic prompt.
                 if isinstance(nl_cot_ref_raw, list):
-                    nl_cot_ref = "\n".join(str(x) for x in nl_cot_ref_raw if x is not None)
+                    joined = "\n".join(str(x) for x in nl_cot_ref_raw if x is not None).strip()
                 else:
-                    nl_cot_ref = str(nl_cot_ref_raw) if nl_cot_ref_raw else None
+                    joined = str(nl_cot_ref_raw).strip()
+                nl_cot_ref = joined or None
+                if nl_cot_ref is None:
+                    print(
+                        f"[nl-cot] WARN: token {token!r} JSON at {nl_cot_path} has empty "
+                        f"'cot_output'; falling back to fut_ego_action and omitting NL reference block.",
+                        file=sys.stderr, flush=True,
+                    )
 
         # 2-level action hint: NL CoT regex (if available) else sample's fut_ego_action.
         fut_ego_action = infer_future_action(sample, nl_cot_text=nl_cot_ref)
@@ -384,10 +399,11 @@ def _build_child_argv(args, dp_index, dp_size):
         cmd += ["--tp_size", str(args.tp_size)]
     if args.nl_cot_dir is not None:
         cmd += ["--nl-cot-dir", args.nl_cot_dir]
-    if args.free_rules:
-        cmd += ["--free-rules"]
+    cmd += ["--free-rules"] if args.free_rules else ["--no-free-rules"]
     if args.sample_ids_json is not None:
         cmd += ["--sample-ids-json", args.sample_ids_json]
+    if args.sample_ids_key is not None:
+        cmd += ["--sample-ids-key", args.sample_ids_key]
     if args.resume:
         cmd += ["--resume"]
     if args.path_prefix_map:
@@ -486,8 +502,9 @@ if __name__ == "__main__":
     parser.add_argument("--nl-cot-dir", type=str, default=None,
                         help="Directory of NL CoT JSONs ({token}.json with cot_output field). "
                              "When set, NL CoT is loaded as prompt reference AND used as action-hint source.")
-    parser.add_argument("--free-rules", action="store_true", default=False,
-                        help='Disable predefined RLIB rules; LLM composes rules freely from facts')
+    parser.add_argument("--free-rules", action=argparse.BooleanOptionalAction, default=True,
+                        help='Default: True. LLM composes rules freely from facts. '
+                             'Pass --no-free-rules to fall back to the predefined RLIB rule set.')
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--sample_num", type=int, default=1)
     parser.add_argument("--num_parts", type=int, default=1)
@@ -496,6 +513,13 @@ if __name__ == "__main__":
         type=str,
         default=None,
         help="JSON file containing tokens to process.",
+    )
+    parser.add_argument(
+        "--sample-ids-key",
+        type=str,
+        default=None,
+        help="When --sample-ids-json points at a scaling-style file with a top-level "
+             "'buckets' dict, pick the bucket name to use (e.g. 'nuplan_cot').",
     )
     parser.add_argument(
         "--resume",
@@ -607,7 +631,7 @@ if __name__ == "__main__":
     missing_tokens = []
 
     if args.sample_ids_json is not None:
-        requested_tokens = load_token_list(args.sample_ids_json)
+        requested_tokens = load_token_list(args.sample_ids_json, args.sample_ids_key)
         indices, missing_tokens = resolve_indices_from_tokens(
             dataset_tokens,
             requested_tokens,
