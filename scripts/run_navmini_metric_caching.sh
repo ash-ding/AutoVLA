@@ -10,7 +10,7 @@ source "$PROJECT_ROOT/.envrc"
 export PYTHONPATH="$PROJECT_ROOT/navsim:$PYTHONPATH"
 
 TRAIN_TEST_SPLIT=navmini
-CACHE_PATH=/export/scratch_large/ding/navsim_workspace/navmini_metric_cache
+CACHE_PATH="$NAVSIM_EXP_ROOT/${TRAIN_TEST_SPLIT}_metric_cache"
 
 echo "=== Generating metric cache for $TRAIN_TEST_SPLIT ==="
 echo "Output: $CACHE_PATH"

@@ -1,0 +1,52 @@
+# AutoVLA workspace layout. Copy this file to `.envrc` and adjust the paths
+# below to match where your datasets and model weights actually live.
+# These env vars are consumed by the upstream nuplan-devkit / navsim simulation
+# stack; AutoVLA's own preprocessing scripts hardcode absolute paths and do
+# NOT depend on these values.
+
+# Legacy upstream wiring — kept commented for reference. NAVSIM_WORKSPACE has
+# no consumers in the codebase; NUPLAN_DATA_ROOT / NUPLAN_EXP_ROOT only matter
+# for nuplan-devkit's native simulator (not NAVSIM); the *_WORKSPACE-derived
+# paths below assumed a $HOME/data/navsim_workspace layout that rarely matches
+# a real install.
+# export NAVSIM_WORKSPACE="$HOME/data/navsim_workspace"
+# export NUPLAN_DATA_ROOT="$NAVSIM_WORKSPACE/dataset"
+# export NUPLAN_EXP_ROOT="$NAVSIM_WORKSPACE/exp"
+# export NAVSIM_EXP_ROOT="$NAVSIM_WORKSPACE/exp"
+# export OPENSCENE_DATA_ROOT="$NAVSIM_WORKSPACE/dataset"
+
+# Repo root. `$PWD` resolves to the repo root because .envrc is sourced from
+# there (either via direnv or via `source .envrc` after cd'ing into the repo).
+# Shell scripts under scripts/ default their log dir to "$AUTOVLA_ROOT/logs".
+export AUTOVLA_ROOT="$PWD"
+
+# navsim devkit lives inside this repo
+export NAVSIM_DEVKIT_ROOT="$PWD/navsim"
+
+# nuPlan map root (NAVSIM eval consumer; download maps separately).
+export NUPLAN_MAP_VERSION="nuplan-maps-v1.0"
+export NUPLAN_MAPS_ROOT="/data/nuPlan/maps"
+
+# OPENSCENE_DATA_ROOT is read by NAVSIM Hydra configs as
+#   navsim_log_path  = $OPENSCENE_DATA_ROOT/navsim_logs/<split>
+#   sensor_blobs_path = $OPENSCENE_DATA_ROOT/sensor_blobs/<split>
+# Pointing at /data/nuPlan matches the unified layout exactly.
+export OPENSCENE_DATA_ROOT="/data/nuPlan"
+
+# NAVSIM_EXP_ROOT is where metric caches and PDM eval outputs land (multi-GB).
+# Choose a writable, fast-local mount.
+export NAVSIM_EXP_ROOT="/data/navsim_exp"
+
+# nuplan-devkit native simulator paths (NAVSIM itself doesn't use these; kept
+# for any direct nuplan-devkit invocation).
+export NUPLAN_DATA_ROOT="/data/nuPlan"
+export NUPLAN_EXP_ROOT="$NAVSIM_EXP_ROOT"
+
+# nuScenes raw data (consumed by tools/preprocessing/nusc_sample_generation.py
+# only when callers pass --nuscenes_path "$NUSCENES_PATH"; the four
+# scripts/run_*preprocess_*.sh wrappers hardcode /data/nuScenes directly).
+export NUSCENES_PATH="/data/nuScenes"
+export NUSCENES_VERSION="v1.0-trainval"
+
+# Multi-GPU forward-compat (no-op on a 1-GPU box).
+export NCCL_P2P_DISABLE=1
