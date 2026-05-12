@@ -19,10 +19,19 @@ class CoTAnnotationModel():
             enforce_eager=False,
             disable_custom_all_reduce=True,
         )
-        self.sampling_params = SamplingParams(
-            max_tokens=config.get('max_tokens', 16384),
-            temperature=config.get('temperature', 0),
-        )
+        sampling_kwargs = {
+            'max_tokens': config.get('max_tokens', 16384),
+            'temperature': config.get('temperature', 0),
+        }
+        # Optional sampling controls — small VL models at greedy decode can
+        # fall into repetition loops on long structured prompts; configs can
+        # opt in to top_p / top_k / repetition_penalty / seed without breaking
+        # callers that don't set them.
+        for k in ('top_p', 'top_k', 'repetition_penalty',
+                  'frequency_penalty', 'presence_penalty', 'seed'):
+            if k in config:
+                sampling_kwargs[k] = config[k]
+        self.sampling_params = SamplingParams(**sampling_kwargs)
 
     def _build_llm_input(self, prompt, image_inputs=None, video_inputs=None, mm_processor_kwargs=None):
         mm_data = {}

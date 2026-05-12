@@ -99,6 +99,36 @@ def serialize_value(value):
     return value
 
 
+_THINKING_BLOCK_RE = re.compile(r"<think>(.*?)</think>\s*", re.DOTALL)
+
+
+def split_thinking(cot_text):
+    """Strip thinking-trace from a Thinking-model output.
+
+    Returns (thinking_text, cleaned_cot). Non-Thinking outputs return
+    ('', cot_text) untouched.
+
+    Handles two cases:
+      A. Full <think>...</think> blocks anywhere in the text.
+      B. Output starts directly inside a thinking block — Qwen3-VL-Thinking's
+         chat template injects the opening '<think>\n' as part of the
+         generation prompt, so the model's output begins with reasoning
+         content and ends thinking with a lone '</think>'. We split on the
+         first '</think>' in that case.
+    """
+    if not isinstance(cot_text, str):
+        return "", cot_text
+    if "<think>" in cot_text:
+        matches = _THINKING_BLOCK_RE.findall(cot_text)
+        thinking = "\n\n".join(m.strip() for m in matches).strip()
+        cleaned = _THINKING_BLOCK_RE.sub("", cot_text).strip()
+        return thinking, cleaned
+    if "</think>" in cot_text:
+        thinking, cleaned = cot_text.split("</think>", 1)
+        return thinking.strip(), cleaned.strip()
+    return "", cot_text
+
+
 def extract_action_from_cot(cot_output):
     if isinstance(cot_output, list) and cot_output:
         return str(cot_output[-1]).strip()
@@ -343,7 +373,7 @@ def validate_symbolic_output(cot_text, schema, sym_parser, sym_validator, parse_
     )
 
 
-def build_result(sample, cot_text, fallback_dataset_name, validation):
+def build_result(sample, cot_text, fallback_dataset_name, validation, thinking_text=""):
     symbolic_valid, symbolic_violations, grounding_warnings, grounding_score = validation
     dataset_name = sample.get("dataset_name") or fallback_dataset_name
     token = sample.get("token", "")
@@ -363,6 +393,9 @@ def build_result(sample, cot_text, fallback_dataset_name, validation):
         "his_trajectory": serialize_value(sample.get("his_trajectory", "")),
         **{f"{side}_camera_paths": sample.get(f"{side}_camera_paths", []) for side in CAM_LIST},
     }
+
+    if thinking_text:
+        result["cot_thinking"] = thinking_text
 
     if dataset_name == "waymo":
         result["preference_scores"] = sample.get("preference_scores", "")
@@ -626,7 +659,7 @@ if __name__ == "__main__":
         free_rules=args.free_rules,
     )
 
-    dataset_tokens = get_dataset_tokens(val_dataset)
+    dataset_tokens = get_dataset_tokens(base_dataset)
     requested_tokens = None
     missing_tokens = []
 
@@ -696,8 +729,13 @@ if __name__ == "__main__":
 
     def save_symbolic_sample(sample, cot_text):
         fallback_token = sample.get("token", f"scene_{stats['total']}")
+        # Thinking-model outputs wrap their reasoning trace in <think>...</think>;
+        # strip it so the symbolic parser only sees the final structured answer,
+        # and preserve the trace separately for analysis.
+        thinking_text, cleaned_cot = split_thinking(cot_text)
+
         validation_with_parse = validate_symbolic_output(
-            cot_text,
+            cleaned_cot,
             schema,
             sym_parser,
             sym_validator,
@@ -713,7 +751,7 @@ if __name__ == "__main__":
         if validation[0]:
             stats["valid"] += 1
 
-        result = build_result(sample, cot_text, dataset_name, validation)
+        result = build_result(sample, cleaned_cot, dataset_name, validation, thinking_text=thinking_text)
         if not result["token"]:
             result["token"] = fallback_token
 
