@@ -12,7 +12,7 @@ TOKEN_LIST_KEYS = (
 )
 
 
-def load_token_list(json_path: str) -> List[str]:
+def load_token_list(json_path: str, sample_ids_key: Optional[str] = None) -> List[str]:
     with open(json_path, "r", encoding="utf-8") as f:
         data = json.load(f)
 
@@ -20,17 +20,34 @@ def load_token_list(json_path: str) -> List[str]:
     if isinstance(data, list):
         raw_tokens = data
     elif isinstance(data, dict):
-        for key in TOKEN_LIST_KEYS:
-            value = data.get(key)
-            if isinstance(value, list):
-                raw_tokens = value
-                break
-        if raw_tokens is None:
-            available = ", ".join(sorted(data.keys()))
-            raise ValueError(
-                f"Could not find a token list in {json_path}. "
-                f"Expected one of {TOKEN_LIST_KEYS}; found keys: {available}"
-            )
+        if sample_ids_key is not None:
+            buckets = data.get("buckets")
+            if not isinstance(buckets, dict):
+                found = type(buckets).__name__ if buckets is not None else "missing"
+                raise ValueError(
+                    f"--sample-ids-key={sample_ids_key!r} requires a top-level 'buckets' dict "
+                    f"in {json_path}; found {found}."
+                )
+            value = buckets.get(sample_ids_key)
+            if not isinstance(value, list):
+                available = ", ".join(sorted(buckets.keys()))
+                raise ValueError(
+                    f"buckets[{sample_ids_key!r}] not found or not a list in {json_path}. "
+                    f"Available buckets: {available}"
+                )
+            raw_tokens = value
+        else:
+            for key in TOKEN_LIST_KEYS:
+                value = data.get(key)
+                if isinstance(value, list):
+                    raw_tokens = value
+                    break
+            if raw_tokens is None:
+                available = ", ".join(sorted(data.keys()))
+                raise ValueError(
+                    f"Could not find a token list in {json_path}. "
+                    f"Expected one of {TOKEN_LIST_KEYS}; found keys: {available}"
+                )
     else:
         raise ValueError(
             f"Unsupported token list format in {json_path}: {type(data).__name__}"

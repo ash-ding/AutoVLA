@@ -93,6 +93,13 @@ if __name__ == "__main__":
         help="JSON file containing the tokens to preprocess",
     )
     parser.add_argument(
+        "--sample-ids-key",
+        type=str,
+        default=None,
+        help="When --sample-ids-json points at a scaling-style file with a top-level "
+             "'buckets' dict, pick the bucket name to use (e.g. 'nuplan_nocot').",
+    )
+    parser.add_argument(
         "--resume",
         action="store_true",
         help="Skip tokens that already have JSON outputs in --output_dir",
@@ -138,7 +145,7 @@ if __name__ == "__main__":
     missing_tokens = []
 
     if args.sample_ids_json is not None:
-        requested_tokens = load_token_list(args.sample_ids_json)
+        requested_tokens = load_token_list(args.sample_ids_json, args.sample_ids_key)
         selected_indices, missing_tokens = resolve_indices_from_tokens(
             dataset_tokens,
             requested_tokens,

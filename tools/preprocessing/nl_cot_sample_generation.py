@@ -111,6 +111,8 @@ def _build_child_argv(args, dp_index, dp_size):
         cmd += ["--tp_size", str(args.tp_size)]
     if args.sample_ids_json is not None:
         cmd += ["--sample-ids-json", args.sample_ids_json]
+    if args.sample_ids_key is not None:
+        cmd += ["--sample-ids-key", args.sample_ids_key]
     if args.resume:
         cmd += ["--resume"]
     return cmd
@@ -203,6 +205,13 @@ if __name__ == "__main__":
         type=str,
         default=None,
         help="JSON file containing the tokens to preprocess",
+    )
+    parser.add_argument(
+        "--sample-ids-key",
+        type=str,
+        default=None,
+        help="When --sample-ids-json points at a scaling-style file with a top-level "
+             "'buckets' dict, pick the bucket name to use (e.g. 'nuplan_cot').",
     )
     parser.add_argument(
         "--resume",
@@ -308,7 +317,7 @@ if __name__ == "__main__":
     missing_tokens = []
 
     if args.sample_ids_json is not None:
-        requested_tokens = load_token_list(args.sample_ids_json)
+        requested_tokens = load_token_list(args.sample_ids_json, args.sample_ids_key)
         indices, missing_tokens = resolve_indices_from_tokens(
             dataset_tokens,
             requested_tokens,
