@@ -1,0 +1,8 @@
+# Optional vLLM inference stack.
+#
+# This is intentionally separate from requirements.txt because vLLM 0.17.1
+# requires opencv-python-headless>=4.13.0, whose current wheels require
+# numpy>=2. The main AutoVLA/Waymo environment stays on numpy==1.24.3 for
+# TensorFlow 2.13 and Waymo compatibility.
+vllm==0.17.1
+flashinfer-python==0.6.4

@@ -1,0 +1,6 @@
+# Use the CUDA 12.8 PyTorch wheels when uv resolves torch packages.
+torch-backend = "cu128"
+
+# requirements.txt includes PyTorch's index for pip compatibility. Allow uv to
+# continue checking PyPI for non-torch packages that may also appear there.
+index-strategy = "unsafe-best-match"

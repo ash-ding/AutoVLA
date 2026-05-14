@@ -9,7 +9,9 @@ with open("requirements.txt") as f:
     requirements = [
         line.strip()
         for line in f
-        if line.strip() and not line.lstrip().startswith("#")
+        if line.strip()
+        and not line.lstrip().startswith("#")
+        and not line.lstrip().startswith("-")
     ]
 
 setup(

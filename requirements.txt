@@ -1,7 +1,7 @@
-# cu128 wheel index for torch family
+# cu128 wheel index for pip compatibility. uv uses uv.toml's torch-backend.
 --extra-index-url https://download.pytorch.org/whl/cu128
 
-# Core inference stack aligned with vLLM 0.17.1 + cu128 driver-forward-compat.
+# Core training/inference stack aligned with cu128 driver-forward-compat.
 torch==2.10.0+cu128
 torchvision==0.25.0+cu128
 torchaudio==2.10.0+cu128
@@ -14,13 +14,15 @@ peft==0.18.1
 qwen-vl-utils>=0.0.14
 sentencepiece==0.2.1
 safetensors==0.5.3
-vllm==0.17.1
-flashinfer-python==0.6.4
 pytorch-lightning==2.6.1
 lightning-utilities==0.14.2
 torchmetrics==1.7.0
 tensorboard==2.20.0
 tensorboard-data-server==0.7.2
+
+# vLLM 0.17.1 currently pulls opencv-python-headless>=4.13.0, which
+# requires numpy>=2 and conflicts with this repo's TensorFlow/Waymo stack.
+# Install requirements-vllm.txt in a separate inference environment if needed.
 
 # nuPlan / NAVSIM stack
 nuplan-devkit @ git+https://github.com/motional/nuplan-devkit@nuplan-devkit-v1.2
@@ -39,7 +41,7 @@ affine==2.4.0
 snuggs==1.4.7
 
 # Vision / data
-opencv-python-headless==4.13.0.92
+opencv-python-headless==4.11.0.86
 pillow==12.0.0
 timm==1.0.15
 av==14.2.0

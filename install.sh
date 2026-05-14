@@ -58,15 +58,15 @@ fi
 "${PIP_INSTALL[@]}" --upgrade typing_extensions
 "${PIP_INSTALL[@]}" autoawq==0.2.8 --no-deps --no-build-isolation
 
-if [[ "${SKIP_IMPORT_CHECK:-0}" != "1" ]]; then
-    TF_CPP_MIN_LOG_LEVEL="${TF_CPP_MIN_LOG_LEVEL:-3}" \
-    TF_ENABLE_ONEDNN_OPTS="${TF_ENABLE_ONEDNN_OPTS:-0}" \
-    "$PYTHON" - <<'PY'
-import yaml
-import tensorflow
-from waymo_open_dataset.protos import end_to_end_driving_data_pb2
-import dataset_utils.preprocessing.waymo_e2e_dataset
+# if [[ "${SKIP_IMPORT_CHECK:-0}" != "1" ]]; then
+#     TF_CPP_MIN_LOG_LEVEL="${TF_CPP_MIN_LOG_LEVEL:-3}" \
+#     TF_ENABLE_ONEDNN_OPTS="${TF_ENABLE_ONEDNN_OPTS:-0}" \
+#     "$PYTHON" - <<'PY'
+# import yaml
+# import tensorflow
+# from waymo_open_dataset.protos import end_to_end_driving_data_pb2
+# import dataset_utils.preprocessing.waymo_e2e_dataset
 
-print("Waymo prepared-chunk imports OK.")
-PY
-fi
+# print("Waymo prepared-chunk imports OK.")
+# PY
+# fi

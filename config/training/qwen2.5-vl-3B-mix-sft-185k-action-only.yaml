@@ -34,10 +34,10 @@ training:
 data:
   train:
     json_dataset_path:
-      - /data/nuplan_nuscenes_train_mix_10k/nuPlan/action_only_samples_6512
-      - /data/nuplan_nuscenes_train_mix_10k/nuPlan/nl_reasoning_samples_Qwen2.4_VL_72B_Instruct_AWQ_2461
-      - /data/nuplan_nuscenes_train_mix_10k/nuScenes/action_only_samples_871
-      - /data/nuplan_nuscenes_train_mix_10k/nuScenes/nl_reasoning_samples_156
+      - /data/nuplan_nuscenes_train_mix_185k/nuPlan/action_only_samples_120682
+      - /data/nuplan_nuscenes_train_mix_185k/nuPlan/nl_reasoning_samples_Qwen2.4_VL_72B_Instruct_AWQ_45600
+      - /data/nuplan_nuscenes_train_mix_185k/nuScenes/action_only_samples_16135
+      - /data/nuplan_nuscenes_train_mix_185k/nuScenes/nl_reasoning_samples_2895
     sensor_data_path:
       - /data/nuPlan/sensor_blobs/trainval
       - /data/nuPlan/sensor_blobs/trainval
