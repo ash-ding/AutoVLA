@@ -51,3 +51,9 @@ symbolic_cot_nl_ref_ablation/
 
 # leann index
 .leann/
+
+# dataset_viewer
+dataset_viewer/
+
+# data
+data/
