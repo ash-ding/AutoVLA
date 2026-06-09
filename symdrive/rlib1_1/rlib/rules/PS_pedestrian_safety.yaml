@@ -1,0 +1,66 @@
+# PS — Pedestrian Safety Rules
+# Priority range: 86–93
+
+rules:
+  - id: PS-001
+    priority: 93
+    category: pedestrian_safety
+    description: >
+      Stop for pedestrian actively crossing at occupied crosswalk.
+    preconditions:
+      - PedestrianCrossing
+      - CrosswalkOccupied
+      - NOT EgoStopped
+    action:
+      lateral: KeepLane
+      longitudinal: Stop
+    explanation: >
+      Pedestrian crossing in crosswalk — immediate stop required.
+    conflict_policy: highest_priority_wins
+
+  - id: PS-002
+    priority: 91
+    category: pedestrian_safety
+    description: >
+      Remain stopped while pedestrian is crossing.
+    preconditions:
+      - PedestrianCrossing
+      - EgoStopped
+    action:
+      lateral: KeepLane
+      longitudinal: Stop
+    explanation: >
+      Already stopped for crossing pedestrian — hold until clear.
+    conflict_policy: highest_priority_wins
+
+  - id: PS-003
+    priority: 88
+    category: pedestrian_safety
+    description: >
+      Slow down approaching crosswalk with waiting pedestrian.
+    preconditions:
+      - ApproachingCrosswalk
+      - PedestrianWaiting
+      - NOT PedestrianCrossing
+    action:
+      lateral: KeepLane
+      longitudinal: Deceleration
+    explanation: >
+      Pedestrian waiting at crosswalk — decelerate in anticipation of crossing.
+    conflict_policy: highest_priority_wins
+
+  - id: PS-004
+    priority: 86
+    category: pedestrian_safety
+    description: >
+      Slow down approaching occupied crosswalk even without active crossing.
+    preconditions:
+      - CrosswalkOccupied
+      - NOT PedestrianCrossing
+      - ApproachingCrosswalk
+    action:
+      lateral: KeepLane
+      longitudinal: Deceleration
+    explanation: >
+      Crosswalk occupied but no active crossing — decelerate cautiously.
+    conflict_policy: highest_priority_wins

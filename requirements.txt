@@ -125,3 +125,6 @@ pytest
 # LLM API clients (used by OpenAI CoT backend etc.)
 openai==2.24.0
 anthropic==0.94.1
+
+# SMT solver for rlib2.0 (symdrive/rlib2_0/verifier.py L4 propositional check on rule bodies).
+z3-solver

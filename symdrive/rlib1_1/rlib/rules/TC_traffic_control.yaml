@@ -1,0 +1,165 @@
+# TC — Traffic Control Compliance Rules
+# Priority range: 85–108
+
+rules:
+  - id: TC-001
+    priority: 105
+    category: traffic_control
+    description: >
+      Stop at red light when approaching intersection and can stop comfortably.
+    preconditions:
+      - RedLight
+      - ApproachingIntersection
+      - CanStopComfortably
+      - NOT EgoStopped
+    action:
+      lateral: KeepLane
+      longitudinal: DecelerationToZero
+    explanation: >
+      Red light with sufficient stopping distance — controlled deceleration to zero.
+    conflict_policy: highest_priority_wins
+
+  - id: TC-002
+    priority: 108
+    category: traffic_control
+    description: >
+      Emergency deceleration at red light when already in intersection and cannot stop comfortably.
+    preconditions:
+      - RedLight
+      - AtIntersection
+      - NOT CanStopComfortably
+      - NOT EgoStopped
+    action:
+      lateral: KeepLane
+      longitudinal: QuickDeceleration
+    explanation: >
+      Already in intersection on red with insufficient stopping distance — quick deceleration
+      to minimize time in intersection.
+    conflict_policy: highest_priority_wins
+
+  - id: TC-003
+    priority: 100
+    category: traffic_control
+    description: >
+      Remain stopped at red light.
+    preconditions:
+      - RedLight
+      - EgoStopped
+    action:
+      lateral: KeepLane
+      longitudinal: Stop
+    explanation: >
+      Already stopped at red — hold position until signal changes.
+    conflict_policy: highest_priority_wins
+
+  - id: TC-004
+    priority: 102
+    category: traffic_control
+    description: >
+      No right turn on red when sign prohibits it.
+    preconditions:
+      - RedLight
+      - NoTurnOnRedSign
+      - InstructionTurnRight
+    action:
+      lateral: KeepLane
+      longitudinal: Stop
+    explanation: >
+      No-turn-on-red sign present — must remain stopped regardless of turn instruction.
+    conflict_policy: highest_priority_wins
+
+  - id: TC-005
+    priority: 95
+    category: traffic_control
+    description: >
+      Decelerate on yellow light when can stop comfortably.
+    preconditions:
+      - YellowLight
+      - ApproachingIntersection
+      - CanStopComfortably
+    action:
+      lateral: KeepLane
+      longitudinal: Deceleration
+    explanation: >
+      Yellow light with sufficient distance — decelerate to prepare to stop.
+    conflict_policy: highest_priority_wins
+
+  - id: TC-006
+    priority: 90
+    category: traffic_control
+    description: >
+      Proceed through yellow if cannot stop comfortably and path is clear.
+    preconditions:
+      - YellowLight
+      - NOT CanStopComfortably
+      - NOT LeadVehicleStopped
+    action:
+      lateral: KeepLane
+      longitudinal: ConstantSpeed
+    explanation: >
+      Too close to stop safely on yellow — maintain speed to clear intersection.
+    conflict_policy: highest_priority_wins
+
+  - id: TC-007
+    priority: 88
+    category: traffic_control
+    description: >
+      Proceed normally on green light with clear path.
+    preconditions:
+      - GreenLight
+      - NOT PathBlocked
+      - NOT LeadVehicleStopped
+    action:
+      lateral: KeepLane
+      longitudinal: ConstantSpeed
+    explanation: >
+      Green light, no obstructions — continue at current speed.
+    conflict_policy: highest_priority_wins
+
+  - id: TC-008
+    priority: 92
+    category: traffic_control
+    description: >
+      Stop at stop sign when approaching and can stop comfortably.
+    preconditions:
+      - StopSignPresent
+      - NOT EgoStopped
+      - CanStopComfortably
+    action:
+      lateral: KeepLane
+      longitudinal: DecelerationToZero
+    explanation: >
+      Stop sign ahead — decelerate to a complete stop.
+    conflict_policy: highest_priority_wins
+
+  - id: TC-009
+    priority: 90
+    category: traffic_control
+    description: >
+      Depart from stop sign after full stop with clear path.
+    preconditions:
+      - StopSignPresent
+      - EgoStopped
+      - NOT PathBlocked
+      - NOT PedestrianCrossing
+    action:
+      lateral: KeepLane
+      longitudinal: Acceleration
+    explanation: >
+      Completed full stop at stop sign, path is clear — proceed.
+    conflict_policy: highest_priority_wins
+
+  - id: TC-010
+    priority: 85
+    category: traffic_control
+    description: >
+      Slow down at yield sign.
+    preconditions:
+      - YieldSignPresent
+      - NOT EgoStopped
+    action:
+      lateral: KeepLane
+      longitudinal: Deceleration
+    explanation: >
+      Yield sign — reduce speed and prepare to give way if needed.
+    conflict_policy: highest_priority_wins

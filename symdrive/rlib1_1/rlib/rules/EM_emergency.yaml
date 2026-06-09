@@ -1,0 +1,33 @@
+# EM — Emergency Vehicle Rules
+# Priority range: 94–96
+
+rules:
+  - id: EM-001
+    priority: 96
+    category: emergency
+    description: >
+      Pull over and stop for emergency vehicle when moving.
+    preconditions:
+      - EmergencyVehicleNearby
+      - NOT EgoStopped
+    action:
+      lateral: KeepLane
+      longitudinal: DecelerationToZero
+    explanation: >
+      Emergency vehicle detected — decelerate to zero to yield right of way.
+    conflict_policy: highest_priority_wins
+
+  - id: EM-002
+    priority: 94
+    category: emergency
+    description: >
+      Remain stopped when emergency vehicle is nearby.
+    preconditions:
+      - EmergencyVehicleNearby
+      - EgoStopped
+    action:
+      lateral: KeepLane
+      longitudinal: Stop
+    explanation: >
+      Already stopped with emergency vehicle nearby — hold position.
+    conflict_policy: highest_priority_wins

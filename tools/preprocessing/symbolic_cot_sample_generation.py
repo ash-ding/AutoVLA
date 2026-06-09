@@ -34,10 +34,7 @@ from typing import Any, Dict, List, Sequence
 import yaml
 from tqdm import tqdm
 
-from dataset_utils.preprocessing.symbolic_cot_prompts import (
-    get_symbolic_cot_prompt,
-    ego_state_to_qualitative,
-)
+from symdrive._pipeline.registry import get_cot_style, valid_styles
 from tools.preprocessing.sample_selection_utils import (
     collect_processed_tokens,
     get_dataset_tokens,
@@ -231,9 +228,11 @@ class SymbolicPromptWrapper:
     """Wraps an existing CoT annotation dataset, replacing the free-form
     prompt with the RLIB symbolic prompt. Supports both vLLM and OpenAI backends."""
 
-    def __init__(self, base_dataset, rlib_dir, processor=None, nl_cot_dir=None, free_rules=False):
+    def __init__(self, base_dataset, rlib_dir, prompt_mod, processor=None,
+                 nl_cot_dir=None, free_rules=False):
         self.base = base_dataset
         self.rlib_dir = rlib_dir
+        self.prompt_mod = prompt_mod  # symdrive.<style>.prompt module
         self.processor = processor  # vLLM needs this; OpenAI passes None
         self.nl_cot_dir = nl_cot_dir
         self.free_rules = free_rules
@@ -277,14 +276,15 @@ class SymbolicPromptWrapper:
         # 2-level action hint: NL CoT regex (if available) else sample's fut_ego_action.
         fut_ego_action = infer_future_action(sample, nl_cot_text=nl_cot_ref)
 
-        # Quantize ego state
-        ego_qual = ego_state_to_qualitative(
+        # Quantize ego state (version-specific: rlib1.x quantizes via thresholds,
+        # rlib2.0 returns raw numerics — both expose the same function name).
+        ego_qual = self.prompt_mod.ego_state_to_qualitative(
             sample["velocity"], sample["acceleration"], sample["instruction"],
             self.rlib_dir,
         )
 
-        # Build symbolic prompt
-        sym_prompt = get_symbolic_cot_prompt(
+        # Build symbolic prompt (version-specific template).
+        sym_prompt = self.prompt_mod.get_symbolic_cot_prompt(
             self.rlib_dir,
             fut_ego_action,
             ego_qual["speed"],
@@ -523,8 +523,14 @@ if __name__ == "__main__":
     parser.add_argument("--output_dir", type=str, required=True)
     parser.add_argument("--backend", type=str, default=None,
                         help='Annotation backend: vllm or openai (overrides config)')
-    parser.add_argument("--rlib_dir", type=str, default="./RLIB",
-                        help='Path to RLIB directory')
+    parser.add_argument("--rlib_dir", type=str, default=None,
+                        help='Path to RLIB ontology directory. If omitted, read from '
+                             "config['rlib_dir']; if config also omits, falls back to "
+                             "./symdrive/rlib1_0/rlib.")
+    parser.add_argument("--cot-style", type=str, default=None,
+                        choices=sorted(valid_styles()),
+                        help='Symbolic CoT design version. If omitted, read from '
+                             "config['cot_style']; defaults to rlib1.0.")
     parser.add_argument(
         "--path-prefix-map",
         action="append",
@@ -587,7 +593,10 @@ if __name__ == "__main__":
         config["sample_ids_json"] = os.path.abspath(args.sample_ids_json)
 
     backend = args.backend or config.get('annotation_backend', 'vllm')
-    rlib_dir = args.rlib_dir or config.get('rlib_dir', './RLIB')
+    rlib_dir = args.rlib_dir or config.get('rlib_dir', './symdrive/rlib1_0/rlib')
+    cot_style = args.cot_style or config.get('cot_style', 'rlib1.0')
+    prompt_mod, verifier_mod = get_cot_style(cot_style)
+    print(f"[cot_style] {cot_style}  (prompt={prompt_mod.__name__}, verifier={verifier_mod.__name__})", flush=True)
     path_prefix_maps = parse_path_prefix_maps(args.path_prefix_map)
 
     # --- Validation: --tp_size, --dp_size, --concurrency, manual sharding interactions ---
@@ -673,6 +682,7 @@ if __name__ == "__main__":
     val_dataset = SymbolicPromptWrapper(
         base_dataset,
         rlib_dir,
+        prompt_mod,
         processor,
         nl_cot_dir=args.nl_cot_dir,
         free_rules=args.free_rules,
@@ -726,9 +736,11 @@ if __name__ == "__main__":
         print("No samples left to process for this shard.")
         raise SystemExit(0)
 
-    from models.symbolic_rules import (
-        SymbolicSchema, SymbolicParser, SymbolicValidator, ParseError,
-    )
+    # Version-specific schema / parser / validator (resolved via registry above).
+    SymbolicSchema = verifier_mod.SymbolicSchema
+    SymbolicParser = verifier_mod.SymbolicParser
+    SymbolicValidator = verifier_mod.SymbolicValidator
+    ParseError = verifier_mod.ParseError
     schema = SymbolicSchema(rlib_dir)
     sym_parser = SymbolicParser(schema)
     sym_validator = SymbolicValidator(

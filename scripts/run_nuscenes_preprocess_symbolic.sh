@@ -27,7 +27,7 @@ python -m tools.preprocessing.symbolic_cot_sample_generation \
     --output_dir /data/nuscenes_symbolic_reasoning_samples_gpt_4o_mini_2895 \
     --sample-ids-json "$SCALING_TOKEN_LIST" \
     --sample-ids-key nuscenes_cot \
-    --rlib_dir "$REPO_ROOT/RLIB" \
+    --rlib_dir "$REPO_ROOT/symdrive/rlib1_0/rlib" \
     --dp_size "$DP_SIZE" \
     --resume 2>&1 | tee -a "$LOG"
 

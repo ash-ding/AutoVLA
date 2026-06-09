@@ -1,0 +1,211 @@
+# FACTS soft vocabulary — Stage 3: FACTS (rlib2.0)
+#
+# rlib2.0 design: facts here are SUGGESTIONS, not constraints. The LLM may use
+# any of these canonical names (preferred for cross-sample consistency) OR
+# invent new fact names when the scene calls for it. The verifier enforces only
+# that every FACT line in the model's output has a non-trivial `:=` right side
+# referencing PERCEPTION or OPERATIONS — i.e. the name is free but the
+# grounding expression is required.
+#
+# Each entry's `typical_expression` is for prompt seeding / in-context guidance
+# only; `common_thresholds` shows typical numeric values used in the literature
+# (Vienna Convention, RSS, ISO 26262 comfort bounds, etc.). LLMs may pick
+# context-appropriate thresholds (5 m is reasonable in city, 20 m on highway).
+#
+# Format:
+#   - name:                <snake_case canonical name>
+#     description:         <one-line plain-English meaning>
+#     typical_expression:  <example `:=` right side using PERCEPTION attrs>
+#     common_thresholds:   <suggested numeric values, dict of name → value>
+#     category:            <traffic_signal | road_structure | lead | pedestrian |
+#                           ego_state | safety | sign | comfort>
+
+vocabulary:
+
+  # --- Traffic signal ---
+  - name: red_imminent
+    description: "Red traffic light close enough that ego must respond"
+    typical_expression: "tl.color == \"red\" ∧ tl.dist_to_stopline < D_close"
+    common_thresholds: {D_close: 30}
+    category: traffic_signal
+
+  - name: yellow_committed_to_stop
+    description: "Yellow light + can still brake to a comfortable stop"
+    typical_expression: "tl.color == \"yellow\" ∧ required_decel_for_stop < A_comfort"
+    common_thresholds: {A_comfort: 3.0}
+    category: traffic_signal
+
+  - name: green_clear
+    description: "Green light on ego's lane, no impeding entity"
+    typical_expression: "tl.color == \"green\" ∧ ¬lead_blocking"
+    common_thresholds: {}
+    category: traffic_signal
+
+  # --- Road structure ---
+  - name: at_intersection
+    description: "Ego inside or about to enter an intersection"
+    typical_expression: "intersection.dist < D_imminent"
+    common_thresholds: {D_imminent: 10}
+    category: road_structure
+
+  - name: approaching_intersection
+    description: "Intersection ahead within planning horizon"
+    typical_expression: "intersection.dist < D_horizon"
+    common_thresholds: {D_horizon: 50}
+    category: road_structure
+
+  # --- Lead vehicle / following ---
+  - name: lead_present
+    description: "There exists a vehicle in ego lane ahead"
+    typical_expression: "count(Filter(Vehicle, lane == \"ego\")) > 0"
+    common_thresholds: {}
+    category: lead
+
+  - name: lead_close
+    description: "Lead vehicle within close-range distance"
+    typical_expression: "lead_vehicle.dist < D_close"
+    common_thresholds: {D_close: 8}
+    category: lead
+
+  - name: lead_too_close
+    description: "Lead vehicle TTC below safe following bound"
+    typical_expression: "TTC_lead < T_safe"
+    common_thresholds: {T_safe: 2.0}
+    category: lead
+
+  - name: lead_stopped
+    description: "Lead vehicle is stationary"
+    typical_expression: "lead_vehicle.vel < V_stop"
+    common_thresholds: {V_stop: 0.5}
+    category: lead
+
+  - name: lead_braking
+    description: "Lead vehicle is decelerating or showing brake lights"
+    typical_expression: "lead_vehicle.signal == \"brake_lights\" ∨ lead_vehicle.vel < ego.speed - V_slack"
+    common_thresholds: {V_slack: 1.0}
+    category: lead
+
+  - name: path_blocked
+    description: "Stationary obstacle in ego's path within imminent range"
+    typical_expression: "lead_vehicle.dist < D_imminent ∧ lead_vehicle.vel < V_stop"
+    common_thresholds: {D_imminent: 5, V_stop: 0.5}
+    category: lead
+
+  # --- Pedestrians ---
+  - name: ped_in_path
+    description: "Pedestrian on ego's path or crosswalk in front"
+    typical_expression: "p.on_crosswalk == \"true\" ∧ abs(p.lat_offset) < W_path"
+    common_thresholds: {W_path: 1.5}
+    category: pedestrian
+
+  - name: ped_blocking
+    description: "Ped in path AND close enough to require yield"
+    typical_expression: "ped_in_path ∧ p.dist < D_yield"
+    common_thresholds: {D_yield: 15}
+    category: pedestrian
+
+  - name: ped_crossing
+    description: "Pedestrian motion = crossing (committed)"
+    typical_expression: "p.motion == \"crossing\""
+    common_thresholds: {}
+    category: pedestrian
+
+  # --- Ego state ---
+  - name: ego_stopped
+    description: "Ego speed below the stopped threshold"
+    typical_expression: "ego.speed < V_stop"
+    common_thresholds: {V_stop: 0.3}
+    category: ego_state
+
+  - name: ego_slow
+    description: "Ego speed in slow regime"
+    typical_expression: "ego.speed < V_slow"
+    common_thresholds: {V_slow: 3.0}
+    category: ego_state
+
+  - name: ego_fast
+    description: "Ego speed above urban speed limit"
+    typical_expression: "ego.speed > V_fast"
+    common_thresholds: {V_fast: 13.9}  # 50 km/h
+    category: ego_state
+
+  - name: can_stop_smoothly
+    description: "Required deceleration to stop is within comfort bound"
+    typical_expression: "required_decel_for_stop < A_comfort"
+    common_thresholds: {A_comfort: 3.0}
+    category: ego_state
+
+  - name: instruction_keep_forward
+    description: "Mission instruction is to keep going straight"
+    typical_expression: "ego.instruction == \"KeepForward\""
+    common_thresholds: {}
+    category: ego_state
+
+  - name: instruction_turn_left
+    description: "Mission instruction is to turn left"
+    typical_expression: "ego.instruction == \"TurnLeft\""
+    common_thresholds: {}
+    category: ego_state
+
+  - name: instruction_turn_right
+    description: "Mission instruction is to turn right"
+    typical_expression: "ego.instruction == \"TurnRight\""
+    common_thresholds: {}
+    category: ego_state
+
+  # --- Safety / neighbors ---
+  - name: left_lane_clear
+    description: "No vehicle close on left lane"
+    typical_expression: "count(Filter(Vehicle, lane == \"left\" ∧ abs(dist) < D_clear)) == 0"
+    common_thresholds: {D_clear: 10}
+    category: safety
+
+  - name: right_lane_clear
+    description: "No vehicle close on right lane"
+    typical_expression: "count(Filter(Vehicle, lane == \"right\" ∧ abs(dist) < D_clear)) == 0"
+    common_thresholds: {D_clear: 10}
+    category: safety
+
+  - name: rear_close
+    description: "Vehicle close behind ego in same lane (rear collision risk)"
+    typical_expression: "rear_vehicle.dist > -D_rear ∧ rear_vehicle.dist < 0"
+    common_thresholds: {D_rear: 8}
+    category: safety
+
+  - name: oncoming_present
+    description: "Vehicle on oncoming lane"
+    typical_expression: "count(Filter(Vehicle, lane == \"oncoming\")) > 0"
+    common_thresholds: {}
+    category: safety
+
+  - name: emergency_nearby
+    description: "Emergency vehicle anywhere in scene"
+    typical_expression: "count(Filter(Vehicle, subtype == \"EmergencyVehicle\")) > 0"
+    common_thresholds: {}
+    category: safety
+
+  # --- Signs ---
+  - name: stop_sign_imminent
+    description: "Stop sign within close range"
+    typical_expression: "stop_sign.dist < D_imminent"
+    common_thresholds: {D_imminent: 15}
+    category: sign
+
+  - name: yield_sign_imminent
+    description: "Yield sign within close range"
+    typical_expression: "yield_sign.dist < D_imminent"
+    common_thresholds: {D_imminent: 15}
+    category: sign
+
+  - name: speed_limit_low
+    description: "Speed limit sign indicates low-speed zone"
+    typical_expression: "speed_limit.value < V_low_kph"
+    common_thresholds: {V_low_kph: 30}
+    category: sign
+
+  # --- Comfort ---
+  - name: brake_uncomfortable
+    description: "Required deceleration exceeds comfort bound"
+    typical_expression: "required_decel_for_stop > A_comfort"
+    common_thresholds: {A_comfort: 3.0}
+    category: comfort

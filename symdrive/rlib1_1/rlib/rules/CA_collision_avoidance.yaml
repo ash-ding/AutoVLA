@@ -1,0 +1,129 @@
+# CA — Collision Avoidance Rules
+# Priority range: 73–83
+
+rules:
+  - id: CA-001
+    priority: 83
+    category: collision_avoidance
+    description: >
+      Quick deceleration when path is blocked by stationary vehicle.
+    preconditions:
+      - PathBlocked
+      - NOT EgoStopped
+    action:
+      lateral: KeepLane
+      longitudinal: QuickDeceleration
+    explanation: >
+      Stationary vehicle blocking ego lane at close range — quick deceleration to avoid collision.
+    conflict_policy: highest_priority_wins
+
+  - id: CA-002
+    priority: 81
+    category: collision_avoidance
+    description: >
+      Match deceleration of braking lead vehicle.
+    preconditions:
+      - LeadVehicleBraking
+      - NOT LeadVehicleStopped
+      - NOT EgoStopped
+    action:
+      lateral: KeepLane
+      longitudinal: Deceleration
+    explanation: >
+      Lead vehicle is braking but still moving — decelerate to maintain safe following distance.
+    conflict_policy: highest_priority_wins
+
+  - id: CA-003
+    priority: 80
+    category: collision_avoidance
+    description: >
+      Decelerate to zero behind stopped lead vehicle at close range.
+    preconditions:
+      - LeadVehicleStopped
+      - LeadVehicleClose
+      - NOT EgoStopped
+    action:
+      lateral: KeepLane
+      longitudinal: DecelerationToZero
+    explanation: >
+      Lead vehicle stopped and close — come to a complete stop.
+    conflict_policy: highest_priority_wins
+
+  - id: CA-004
+    priority: 79
+    category: collision_avoidance
+    description: >
+      Hold position behind stopped lead vehicle.
+    preconditions:
+      - LeadVehicleStopped
+      - EgoStopped
+    action:
+      lateral: KeepLane
+      longitudinal: Stop
+    explanation: >
+      Both ego and lead vehicle stopped — maintain stop.
+    conflict_policy: highest_priority_wins
+
+  - id: CA-005
+    priority: 77
+    category: collision_avoidance
+    description: >
+      Maintain speed following moving lead vehicle at safe distance.
+    preconditions:
+      - LeadVehiclePresent
+      - NOT LeadVehicleBraking
+      - NOT LeadVehicleStopped
+      - NOT LeadVehicleClose
+    action:
+      lateral: KeepLane
+      longitudinal: ConstantSpeed
+    explanation: >
+      Lead vehicle moving normally at safe distance — maintain current speed.
+    conflict_policy: highest_priority_wins
+
+  - id: CA-008
+    priority: 76
+    category: collision_avoidance
+    description: >
+      Decelerate when lead vehicle is close but still moving and not braking.
+    preconditions:
+      - LeadVehicleClose
+      - NOT LeadVehicleBraking
+      - NOT LeadVehicleStopped
+      - NOT EgoStopped
+    action:
+      lateral: KeepLane
+      longitudinal: Deceleration
+    explanation: >
+      Lead vehicle close and moving but not yet braking — preemptive deceleration to maintain safe following distance.
+    conflict_policy: highest_priority_wins
+
+  - id: CA-006
+    priority: 75
+    category: collision_avoidance
+    description: >
+      Decelerate when adjacent vehicle is dangerously close.
+    preconditions:
+      - AdjacentVehicleClose
+      - NOT LeadVehiclePresent
+    action:
+      lateral: KeepLane
+      longitudinal: Deceleration
+    explanation: >
+      Vehicle in adjacent lane too close — slow down to create separation.
+    conflict_policy: highest_priority_wins
+
+  - id: CA-007
+    priority: 73
+    category: collision_avoidance
+    description: >
+      Accelerate slightly when rear vehicle is closing in.
+    preconditions:
+      - RearVehicleApproaching
+      - NOT LeadVehiclePresent
+    action:
+      lateral: KeepLane
+      longitudinal: Acceleration
+    explanation: >
+      Vehicle approaching from behind with clear path ahead — accelerate to avoid rear-end risk.
+    conflict_policy: highest_priority_wins

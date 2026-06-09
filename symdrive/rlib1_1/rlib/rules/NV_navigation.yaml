@@ -1,0 +1,125 @@
+# NV — Navigation Rules
+# Priority range: 64–72
+
+rules:
+  - id: NV-001
+    priority: 72
+    category: navigation
+    description: >
+      Execute left turn at intersection when safe.
+    preconditions:
+      - InstructionTurnLeft
+      - AtIntersection
+      - NOT OncomingTraffic
+      - NOT PedestrianCrossing
+      - GreenLight
+    action:
+      lateral: TurnLeft
+      longitudinal: Deceleration
+    explanation: >
+      Green light, no oncoming traffic or pedestrians — execute left turn at reduced speed.
+    conflict_policy: highest_priority_wins
+
+  - id: NV-002
+    priority: 70
+    category: navigation
+    description: >
+      Execute right turn at intersection when safe.
+    preconditions:
+      - InstructionTurnRight
+      - AtIntersection
+      - NOT CrosswalkOccupied
+      - NOT PedestrianCrossing
+    action:
+      lateral: TurnRight
+      longitudinal: Deceleration
+    explanation: >
+      Intersection clear of pedestrians — execute right turn at reduced speed.
+    conflict_policy: highest_priority_wins
+
+  - id: NV-003
+    priority: 68
+    category: navigation
+    description: >
+      Prepare for left turn by decelerating on approach.
+    preconditions:
+      - InstructionTurnLeft
+      - ApproachingIntersection
+      - GreenLight
+      - NOT PathBlocked
+    action:
+      lateral: KeepLane
+      longitudinal: Deceleration
+    explanation: >
+      Approaching intersection for left turn on green — decelerate to prepare.
+    conflict_policy: highest_priority_wins
+
+  - id: NV-004
+    priority: 66
+    category: navigation
+    description: >
+      Continue straight through intersection on green.
+    preconditions:
+      - InstructionKeepForward
+      - AtIntersection
+      - GreenLight
+      - NOT PathBlocked
+      - NOT PedestrianCrossing
+    action:
+      lateral: KeepLane
+      longitudinal: ConstantSpeed
+    explanation: >
+      Green light at intersection, going straight, path clear — maintain speed.
+    conflict_policy: highest_priority_wins
+
+  - id: NV-005
+    priority: 64
+    category: navigation
+    description: >
+      Continue forward on open road with no restrictions.
+    preconditions:
+      - InstructionKeepForward
+      - NOT PathBlocked
+      - NOT LeadVehicleStopped
+      - NOT RedLight
+      - NOT StopSignPresent
+    action:
+      lateral: KeepLane
+      longitudinal: ConstantSpeed
+    explanation: >
+      Open road, no traffic controls or obstructions — cruise at constant speed.
+    conflict_policy: highest_priority_wins
+
+  - id: NV-006
+    priority: 67
+    category: navigation
+    description: >
+      Change lane left when lead vehicle is close and left lane is clear.
+    preconditions:
+      - LeadVehicleClose
+      - LeftLaneClear
+      - InstructionKeepForward
+      - NOT AdjacentVehicleClose
+    action:
+      lateral: ChangeLaneLeft
+      longitudinal: ConstantSpeed
+    explanation: >
+      Lead vehicle too close and left lane is clear — change lane left to maintain progress.
+    conflict_policy: highest_priority_wins
+
+  - id: NV-007
+    priority: 65
+    category: navigation
+    description: >
+      Change lane right when lead vehicle is close and right lane is clear.
+    preconditions:
+      - LeadVehicleClose
+      - RightLaneClear
+      - InstructionKeepForward
+      - NOT AdjacentVehicleClose
+    action:
+      lateral: ChangeLaneRight
+      longitudinal: ConstantSpeed
+    explanation: >
+      Lead vehicle too close and right lane is clear — change lane right to maintain progress.
+    conflict_policy: highest_priority_wins

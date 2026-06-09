@@ -1,0 +1,82 @@
+# SM — Speed Management Rules
+# Priority range: 54–62
+
+rules:
+  - id: SM-001
+    priority: 62
+    category: speed_management
+    description: >
+      Slow down in school zone when not already slow.
+    preconditions:
+      - InSchoolZone
+      - NOT EgoMovingSlow
+      - NOT EgoStopped
+    action:
+      lateral: KeepLane
+      longitudinal: Deceleration
+    explanation: >
+      School zone requires reduced speed — decelerate.
+    conflict_policy: highest_priority_wins
+
+  - id: SM-002
+    priority: 60
+    category: speed_management
+    description: >
+      Slow down in construction zone when not already slow.
+    preconditions:
+      - InConstructionZone
+      - NOT EgoMovingSlow
+      - NOT EgoStopped
+    action:
+      lateral: KeepLane
+      longitudinal: Deceleration
+    explanation: >
+      Construction zone requires reduced speed — decelerate.
+    conflict_policy: highest_priority_wins
+
+  - id: SM-003
+    priority: 58
+    category: speed_management
+    description: >
+      Reduce speed in low speed limit zone.
+    preconditions:
+      - SpeedLimitLow
+      - NOT EgoMovingSlow
+      - NOT EgoStopped
+    action:
+      lateral: KeepLane
+      longitudinal: Deceleration
+    explanation: >
+      Speed limit sign indicates low-speed zone — decelerate to comply.
+    conflict_policy: highest_priority_wins
+
+  - id: SM-004
+    priority: 56
+    category: speed_management
+    description: >
+      Maintain slow speed in school zone.
+    preconditions:
+      - InSchoolZone
+      - EgoMovingSlow
+    action:
+      lateral: KeepLane
+      longitudinal: ConstantSpeed
+    explanation: >
+      Already at appropriate speed in school zone — maintain.
+    conflict_policy: highest_priority_wins
+
+  - id: SM-005
+    priority: 54
+    category: speed_management
+    description: >
+      Slow down in merge zone when no adjacent conflict.
+    preconditions:
+      - InMergeZone
+      - NOT EgoStopped
+      - NOT AdjacentVehicleClose
+    action:
+      lateral: KeepLane
+      longitudinal: Deceleration
+    explanation: >
+      Merge zone — reduce speed to facilitate safe merging.
+    conflict_policy: highest_priority_wins

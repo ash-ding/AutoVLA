@@ -10,7 +10,8 @@ temperature: 0
 image_detail: low
 
 # RLIB
-rlib_dir: ./RLIB
+rlib_dir: ./symdrive/rlib1_0/rlib
+cot_style: rlib1.0
 
 # Dataset (NuscenesCoTAnnotationDataset reads: dataset_path, version, split, num_history_frames, num_future_frames)
 dataset_name: nuscenes

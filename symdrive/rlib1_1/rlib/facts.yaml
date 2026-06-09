@@ -1,0 +1,390 @@
+# Fact Vocabulary + Grounding Conditions — Stage 3: FACTS  (rlib1.1)
+#
+# vocabulary: list of all valid fact names
+# groundings: formal conditions defining when each fact is True
+#
+# Grounding condition kinds:
+#   entity    — EXISTS entity matching type + attributes (Ego is just another entity here)
+#   no_entity — NOT EXISTS entity matching type + attributes
+#   judgment  — requires model reasoning, cannot be verified automatically
+#
+# rlib1.1 difference vs rlib1.0:
+#   - The `ego` condition kind has been retired. Ego state is now declared as an
+#     entity in PERCEPTION (e.g. `ego = Ego {speed: Slow, ...}`) and queried via
+#     the normal `entity` kind. The verifier still recognizes the legacy `ego`
+#     kind for backward compatibility with rlib1.0 inputs.
+#
+# Multiple conditions per fact = OR (any branch satisfies).
+# Within one condition: attributes = AND, attr_in = value in set.
+#
+# DESCRIPTION CONVENTIONS (read this — these descriptions are shown to the model):
+#   - Each description spells out the EXACT entity attributes required so the
+#     model can declare the corresponding entity in PERCEPTION correctly.
+
+vocabulary:
+  # Traffic signal
+  - RedLight
+  - YellowLight
+  - GreenLight
+  - NoTrafficLight
+
+  # Road structure
+  - ApproachingIntersection
+  - AtIntersection
+  - ApproachingCrosswalk
+  - InMergeZone
+  - InConstructionZone
+  - InSchoolZone
+
+  # Lead vehicle
+  - LeadVehiclePresent
+  - LeadVehicleClose
+  - LeadVehicleBraking
+  - LeadVehicleStopped
+  - PathBlocked
+
+  # Pedestrians
+  - PedestrianCrossing
+  - PedestrianWaiting
+  - CrosswalkOccupied
+
+  # Ego state
+  - EgoStopped
+  - EgoMovingSlow
+  - CanStopComfortably
+  - InstructionTurnLeft
+  - InstructionTurnRight
+  - InstructionKeepForward
+
+  # Safety
+  - EmergencyVehicleNearby
+  - OncomingTraffic
+  - AdjacentVehicleClose
+  - RearVehicleApproaching
+  - LeftLaneClear
+  - RightLaneClear
+
+  # Traffic signs
+  - StopSignPresent
+  - YieldSignPresent
+  - NoTurnOnRedSign
+  - SpeedLimitLow
+
+groundings:
+
+  # --- Traffic Signal ---
+
+  RedLight:
+    description: "True iff PERCEPTION declares a TrafficLight with color=Red AND applies_to in {EgoLane, All}"
+    category: traffic_signal
+    conditions:
+      - kind: entity
+        base_type: TrafficLight
+        attributes: {color: Red}
+        attr_in: {applies_to: [EgoLane, All]}
+
+  YellowLight:
+    description: "True iff PERCEPTION declares a TrafficLight with color=Yellow AND applies_to in {EgoLane, All}"
+    category: traffic_signal
+    conditions:
+      - kind: entity
+        base_type: TrafficLight
+        attributes: {color: Yellow}
+        attr_in: {applies_to: [EgoLane, All]}
+
+  GreenLight:
+    description: "True iff PERCEPTION declares a TrafficLight with color=Green AND applies_to in {EgoLane, All}"
+    category: traffic_signal
+    conditions:
+      - kind: entity
+        base_type: TrafficLight
+        attributes: {color: Green}
+        attr_in: {applies_to: [EgoLane, All]}
+
+  NoTrafficLight:
+    description: "True iff PERCEPTION declares NO TrafficLight with applies_to in {EgoLane, All}"
+    category: traffic_signal
+    conditions:
+      - kind: no_entity
+        base_type: TrafficLight
+        attr_in: {applies_to: [EgoLane, All]}
+
+  # --- Road Structure ---
+
+  ApproachingIntersection:
+    description: "True iff PERCEPTION declares an Intersection with position=Ahead AND distance in {Near, VeryNear}"
+    category: road_structure
+    conditions:
+      - kind: entity
+        base_type: RoadFeature
+        subtype: Intersection
+        attributes: {position: Ahead}
+        attr_in: {distance: [Near, VeryNear]}
+
+  AtIntersection:
+    description: "True iff PERCEPTION declares an Intersection with position=Current, OR an Intersection with distance=VeryNear"
+    category: road_structure
+    conditions:
+      - kind: entity
+        base_type: RoadFeature
+        subtype: Intersection
+        attributes: {position: Current}
+      - kind: entity
+        base_type: RoadFeature
+        subtype: Intersection
+        attr_in: {distance: [VeryNear]}
+
+  ApproachingCrosswalk:
+    description: "True iff PERCEPTION declares a Crosswalk with position=Ahead AND distance in {Near, VeryNear}"
+    category: road_structure
+    conditions:
+      - kind: entity
+        base_type: RoadFeature
+        subtype: Crosswalk
+        attributes: {position: Ahead}
+        attr_in: {distance: [Near, VeryNear]}
+
+  InMergeZone:
+    description: "True iff PERCEPTION declares a MergePoint with position=Current, OR a MergePoint with distance=VeryNear"
+    category: road_structure
+    conditions:
+      - kind: entity
+        base_type: RoadFeature
+        subtype: MergePoint
+        attributes: {position: Current}
+      - kind: entity
+        base_type: RoadFeature
+        subtype: MergePoint
+        attr_in: {distance: [VeryNear]}
+
+  InConstructionZone:
+    description: "True iff PERCEPTION declares a WorkZone with position=Current, OR a WorkZone with distance=VeryNear"
+    category: road_structure
+    conditions:
+      - kind: entity
+        base_type: RoadFeature
+        subtype: WorkZone
+        attributes: {position: Current}
+      - kind: entity
+        base_type: RoadFeature
+        subtype: WorkZone
+        attr_in: {distance: [VeryNear]}
+
+  InSchoolZone:
+    description: "True iff PERCEPTION declares a SchoolZone TrafficSign"
+    category: road_structure
+    conditions:
+      - kind: entity
+        base_type: TrafficSign
+        subtype: SchoolZone
+
+  # --- Lead Vehicle ---
+
+  LeadVehiclePresent:
+    description: "True iff PERCEPTION declares a Vehicle with position=Front AND lane=EgoLane"
+    category: lead_vehicle
+    conditions:
+      - kind: entity
+        base_type: Vehicle
+        attributes: {position: Front, lane: EgoLane}
+
+  LeadVehicleClose:
+    description: "True iff PERCEPTION declares a Vehicle with position=Front, lane=EgoLane, AND distance in {Near, VeryNear}"
+    category: lead_vehicle
+    conditions:
+      - kind: entity
+        base_type: Vehicle
+        attributes: {position: Front, lane: EgoLane}
+        attr_in: {distance: [VeryNear, Near]}
+
+  LeadVehicleBraking:
+    description: "True iff PERCEPTION declares a Vehicle with position=Front AND lane=EgoLane AND (signal=BrakeLights OR motion=Decelerating)"
+    category: lead_vehicle
+    conditions:
+      - kind: entity
+        base_type: Vehicle
+        attributes: {position: Front, lane: EgoLane, signal: BrakeLights}
+      - kind: entity
+        base_type: Vehicle
+        attributes: {position: Front, lane: EgoLane, motion: Decelerating}
+
+  LeadVehicleStopped:
+    description: "True iff PERCEPTION declares a Vehicle with position=Front, lane=EgoLane, motion=Stationary"
+    category: lead_vehicle
+    conditions:
+      - kind: entity
+        base_type: Vehicle
+        attributes: {position: Front, lane: EgoLane, motion: Stationary}
+
+  PathBlocked:
+    description: "True iff PERCEPTION declares a Vehicle with position=Front, lane=EgoLane, motion=Stationary, AND distance in {Near, VeryNear}"
+    category: lead_vehicle
+    conditions:
+      - kind: entity
+        base_type: Vehicle
+        attributes: {position: Front, lane: EgoLane, motion: Stationary}
+        attr_in: {distance: [VeryNear, Near]}
+
+  # --- Pedestrians ---
+
+  PedestrianCrossing:
+    description: "True iff PERCEPTION declares a Pedestrian with motion=Crossing"
+    category: pedestrians
+    conditions:
+      - kind: entity
+        base_type: Pedestrian
+        attributes: {motion: Crossing}
+
+  PedestrianWaiting:
+    description: "True iff PERCEPTION declares a Pedestrian with motion=Standing AND location in {Crosswalk, Road, Shoulder}"
+    category: pedestrians
+    conditions:
+      - kind: entity
+        base_type: Pedestrian
+        attributes: {motion: Standing}
+        attr_in: {location: [Crosswalk, Road, Shoulder]}
+
+  CrosswalkOccupied:
+    description: "True iff PERCEPTION declares a Pedestrian with location=Crosswalk (any motion)"
+    category: pedestrians
+    conditions:
+      - kind: entity
+        base_type: Pedestrian
+        attributes: {location: Crosswalk}
+
+  # --- Ego State ---
+
+  EgoStopped:
+    description: "True iff PERCEPTION declares an Ego entity with speed=Stopped"
+    category: ego_state
+    conditions:
+      - kind: entity
+        base_type: Ego
+        attributes: {speed: Stopped}
+
+  EgoMovingSlow:
+    description: "True iff PERCEPTION declares an Ego entity with speed=Slow"
+    category: ego_state
+    conditions:
+      - kind: entity
+        base_type: Ego
+        attributes: {speed: Slow}
+
+  CanStopComfortably:
+    description: "Judgment fact: ego can brake to a full stop before the stop point without harsh deceleration. No automatic check — the model must reason from ego speed and distance to the nearest stop-requiring entity (traffic light, stop sign, lead vehicle, crosswalk). Slow speed or far distance generally implies True; fast speed with very near distance implies False."
+    category: ego_state
+    conditions:
+      - kind: judgment
+        description: >
+          Infer from ego speed and distance to the nearest stop-requiring entity
+          (traffic light, stop sign, lead vehicle, crosswalk). Slow speed or far
+          distance generally implies True; fast speed with very near distance
+          implies False.
+
+  InstructionTurnLeft:
+    description: "True iff PERCEPTION declares an Ego entity with instruction=TurnLeft"
+    category: ego_state
+    conditions:
+      - kind: entity
+        base_type: Ego
+        attributes: {instruction: TurnLeft}
+
+  InstructionTurnRight:
+    description: "True iff PERCEPTION declares an Ego entity with instruction=TurnRight"
+    category: ego_state
+    conditions:
+      - kind: entity
+        base_type: Ego
+        attributes: {instruction: TurnRight}
+
+  InstructionKeepForward:
+    description: "True iff PERCEPTION declares an Ego entity with instruction=KeepForward"
+    category: ego_state
+    conditions:
+      - kind: entity
+        base_type: Ego
+        attributes: {instruction: KeepForward}
+
+  # --- Safety ---
+
+  EmergencyVehicleNearby:
+    description: "True iff PERCEPTION declares an EmergencyVehicle (subtype of Vehicle)"
+    category: safety
+    conditions:
+      - kind: entity
+        base_type: Vehicle
+        subtype: EmergencyVehicle
+
+  OncomingTraffic:
+    description: "True iff PERCEPTION declares a Vehicle with lane=OncomingLane"
+    category: safety
+    conditions:
+      - kind: entity
+        base_type: Vehicle
+        attributes: {lane: OncomingLane}
+
+  AdjacentVehicleClose:
+    description: "True iff PERCEPTION declares a Vehicle with lane in {LeftLane, RightLane, Adjacent} AND distance in {Near, VeryNear}"
+    category: safety
+    conditions:
+      - kind: entity
+        base_type: Vehicle
+        attr_in: {lane: [LeftLane, RightLane, Adjacent], distance: [VeryNear, Near]}
+
+  RearVehicleApproaching:
+    description: "True iff PERCEPTION declares a Vehicle with position=Behind AND motion=Approaching"
+    category: safety
+    conditions:
+      - kind: entity
+        base_type: Vehicle
+        attributes: {position: Behind, motion: Approaching}
+
+  LeftLaneClear:
+    description: "True iff PERCEPTION declares NO Vehicle with (lane=LeftLane AND distance in {Near, VeryNear})"
+    category: safety
+    conditions:
+      - kind: no_entity
+        base_type: Vehicle
+        attr_in: {lane: [LeftLane], distance: [VeryNear, Near]}
+
+  RightLaneClear:
+    description: "True iff PERCEPTION declares NO Vehicle with (lane=RightLane AND distance in {Near, VeryNear})"
+    category: safety
+    conditions:
+      - kind: no_entity
+        base_type: Vehicle
+        attr_in: {lane: [RightLane], distance: [VeryNear, Near]}
+
+  # --- Traffic Signs ---
+
+  StopSignPresent:
+    description: "True iff PERCEPTION declares a StopSign TrafficSign"
+    category: traffic_signs
+    conditions:
+      - kind: entity
+        base_type: TrafficSign
+        subtype: StopSign
+
+  YieldSignPresent:
+    description: "True iff PERCEPTION declares a YieldSign TrafficSign"
+    category: traffic_signs
+    conditions:
+      - kind: entity
+        base_type: TrafficSign
+        subtype: YieldSign
+
+  NoTurnOnRedSign:
+    description: "True iff PERCEPTION declares a NoTurnOnRed TrafficSign"
+    category: traffic_signs
+    conditions:
+      - kind: entity
+        base_type: TrafficSign
+        subtype: NoTurnOnRed
+
+  SpeedLimitLow:
+    description: "True iff PERCEPTION declares a SpeedLimit TrafficSign (implying a low-speed zone)"
+    category: traffic_signs
+    conditions:
+      - kind: entity
+        base_type: TrafficSign
+        subtype: SpeedLimit

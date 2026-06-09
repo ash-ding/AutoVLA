@@ -1,0 +1,44 @@
+# OPERATIONS grammar — Stage 2: OPERATIONS (rlib2.0)
+#
+# OPERATIONS section is OPTIONAL — only used when a derived numerical quantity
+# is reused across multiple FACTS or is non-trivial. For simple scenes, FACTS
+# can grow directly from PERCEPTION attributes.
+#
+# Each OPERATIONS line is of the form:
+#     name := <expression>    = <numeric_or_set_result>
+#
+# `name` is the LLM-chosen identifier; later FACTS may reference it.
+# `<expression>` must be composed entirely from:
+#   - PERCEPTION entity attributes:  ent.attr  (e.g. v_1.dist, ego.speed)
+#   - earlier OPERATIONS results:     <op_name>
+#   - whitelisted operators and functions (below)
+#   - numeric literals (int or float)
+#
+# Result must be either a number, a Boolean, or a set of entity ids
+# (written as `{id, id, ...}`).
+
+allowed_operators:
+  arithmetic: ["+", "-", "*", "/", "**"]
+  comparison: ["<", "<=", ">", ">=", "==", "!="]
+  unary:      ["-", "abs"]
+
+allowed_functions:
+  # Numeric reductions / arithmetic
+  abs:    {arity: 1, returns: number, description: "Absolute value"}
+  min:    {arity: "2+", returns: number, description: "Minimum (also accepts a set for reductions)"}
+  max:    {arity: "2+", returns: number, description: "Maximum (also accepts a set for reductions)"}
+  sum:    {arity: 1,   returns: number, description: "Sum over a set or list"}
+  sqrt:   {arity: 1,   returns: number, description: "Square root"}
+
+  # Set operations
+  Filter: {arity: 2, returns: set,    description: "Filter(EntityType, predicate) → set of matching ids"}
+  count:  {arity: 1, returns: number, description: "Cardinality of a set"}
+  argmin: {arity: 2, returns: id,     description: "argmin(set, attr) — entity id with smallest attr"}
+  argmax: {arity: 2, returns: id,     description: "argmax(set, attr) — entity id with largest attr"}
+
+# Style guidance shown to the LLM; not enforced by the verifier.
+style:
+  - "Use OPERATIONS only for quantities that are reused or whose computation is non-trivial (>1 op)."
+  - "Inline simple comparisons directly into FACTS rather than introducing an OPERATIONS line."
+  - "Name operations after the physical quantity (e.g. TTC_lead, required_decel, gap_to_stopline)."
+  - "Each operation must produce a number, Boolean, or set — never an entity attribute mutation."

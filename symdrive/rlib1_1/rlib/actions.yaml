@@ -1,0 +1,20 @@
+# Actions — Stage 4: RULES output
+#
+# Each rule produces exactly one lateral + one longitudinal action.
+
+lateral:
+  - KeepLane
+  - TurnLeft
+  - ChangeLaneLeft
+  - TurnRight
+  - ChangeLaneRight
+  - UTurn
+
+longitudinal:
+  - Stop
+  - DecelerationToZero
+  - ConstantSpeed
+  - QuickDeceleration
+  - Deceleration
+  - QuickAcceleration
+  - Acceleration

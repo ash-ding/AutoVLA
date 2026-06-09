@@ -1,0 +1,22 @@
+# Numeric thresholds that bucketize continuous ego state into qualitative labels.
+#
+# Used by SymbolicSchema.bucketize() and dataset_utils/preprocessing/symbolic_cot_prompts.py.
+# Buckets are ordered: bucketize returns the first label whose `max` is not exceeded;
+# the final bucket has no `max` (open-ended).
+
+speed:
+  unit: m/s
+  source: magnitude of 2D velocity
+  buckets:
+    - {label: Stopped, max: 0.3}
+    - {label: Slow,    max: 3.0}
+    - {label: Medium,  max: 8.0}
+    - {label: Fast}
+
+acceleration:
+  unit: m/s^2
+  source: x-component (primary driving direction)
+  buckets:
+    - {label: Braking,      max: -0.5}
+    - {label: Coasting,     max:  0.5}
+    - {label: Accelerating}

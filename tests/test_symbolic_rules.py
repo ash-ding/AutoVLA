@@ -9,7 +9,7 @@ from models.symbolic_rules import (
     SymbolicSchema, SymbolicParser, SymbolicValidator, compute_symbolic_complexity,
 )
 
-SCHEMA_PATH = Path(__file__).parent.parent / "RLIB"
+SCHEMA_PATH = Path(__file__).parent.parent / "symdrive" / "rlib1_0" / "rlib"
 
 
 @pytest.fixture

@@ -1,0 +1,69 @@
+# Entity Type Schema — Stage 1: PERCEPTION (rlib2.0)
+#
+# rlib2.0 difference vs rlib1.x:
+#   - Attributes have explicit type tags: {type: number, unit: ...} for continuous
+#     quantities, or {type: enum, values: [...]} for categorical ones.
+#   - PERCEPTION declarations carry real numerical values (e.g. dist: 8.3, vel: 2.1),
+#     NOT qualitative buckets (Near/Far/Slow/Fast). This enables `:=` grounding
+#     expressions in FACTS to compose arithmetic comparisons.
+#   - Ego is a first-class entity type (declared as `ego = Ego {...}` in PERCEPTION).
+#
+# The verifier uses this schema only for L2 (cross-reference) sanity checks; the
+# actual numerical computation happens in L3 over the OPERATIONS / FACTS `:=`
+# expressions using PERCEPTION values as the variable bindings.
+
+Vehicle:
+  subtypes: [Car, Truck, Bus, Motorcycle, EmergencyVehicle, ConstructionVehicle]
+  attributes:
+    dist:        {type: number, unit: m,   description: "Longitudinal distance from ego front bumper"}
+    lat_offset:  {type: number, unit: m,   description: "Lateral offset from ego centerline (signed, + = right)"}
+    vel:         {type: number, unit: m/s, description: "Forward speed in world frame"}
+    heading:     {type: number, unit: rad, description: "Heading relative to ego (optional)"}
+    lane:        {type: enum,   values: [ego, left, right, oncoming, adjacent]}
+    signal:      {type: enum,   values: [none, left_blinker, right_blinker, brake_lights, hazard]}
+
+Pedestrian:
+  subtypes: []
+  attributes:
+    dist:           {type: number, unit: m,   description: "Distance from ego"}
+    lat_offset:     {type: number, unit: m,   description: "Lateral offset (signed)"}
+    vel:            {type: number, unit: m/s, description: "Speed magnitude"}
+    on_crosswalk:   {type: enum,   values: [true, false]}
+    location:       {type: enum,   values: [sidewalk, crosswalk, road, shoulder]}
+    motion:         {type: enum,   values: [standing, walking, running, crossing]}
+
+Cyclist:
+  subtypes: [Bicycle, Scooter]
+  attributes:
+    dist:        {type: number, unit: m}
+    lat_offset:  {type: number, unit: m}
+    vel:         {type: number, unit: m/s}
+    lane:        {type: enum,   values: [ego, bike_lane, sidewalk, road]}
+
+TrafficLight:
+  subtypes: []
+  attributes:
+    color:               {type: enum,   values: [red, yellow, green, off, flashing]}
+    dist_to_stopline:    {type: number, unit: m, description: "Distance from ego to the stop line this light controls"}
+    applies_to:          {type: enum,   values: [ego_lane, left_turn, right_turn, pedestrian, all]}
+
+TrafficSign:
+  subtypes: [SpeedLimit, StopSign, YieldSign, NoTurnOnRed, SchoolZone,
+             ConstructionZone, MergeSign, LaneEndSign, OneWay]
+  attributes:
+    dist:        {type: number, unit: m}
+    value:       {type: number, unit: any, description: "Numeric value if applicable (e.g. speed limit in km/h)"}
+
+RoadFeature:
+  subtypes: [Crosswalk, Intersection, MergePoint, RoundAbout, RampEntry,
+             RampExit, ParkingArea, WorkZone]
+  attributes:
+    dist:        {type: number, unit: m, description: "Distance ahead (negative if behind)"}
+    width:       {type: number, unit: m, description: "Width if applicable, e.g. crosswalk"}
+
+Ego:
+  subtypes: []
+  attributes:
+    speed:        {type: number, unit: m/s,   description: "Current forward speed"}
+    accel:        {type: number, unit: m/s^2, description: "Current forward acceleration (signed)"}
+    instruction:  {type: enum,   values: [KeepForward, TurnLeft, TurnRight]}
