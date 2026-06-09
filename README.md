@@ -108,6 +108,7 @@ The four scripts hardcode the **scaling token list path** (185k), **model name/p
 - To change vLLM batch / TP / sequence length: edit `batch_size` / `max_num_seqs` / `max_model_len` / `tensor_parallel_size` in `config/dataset/qwen2.5-vl-72B-nuplan-trainval.yaml`
 - To switch the symbolic CoT backend: edit `annotation_backend` / `api_model` in `symbolic-cot-gpt4o-mini-*.yaml`
 - For DP fanout across multiple GPUs: `DP_SIZE=8 bash scripts/run_nuplan_preprocess_nl.sh`
+- **Teacher camera-view count (`include_back_view`)** — applies to **both** NL CoT and symbolic CoT generation across all three datasets (nuPlan / nuScenes / Waymo). Default `true` (4 views: front + back + left/front_left + right/front_right) reproduces the original recipe. Set `include_back_view: false` in the dataset YAML to drop the back camera and feed the teacher the same 3-camera view the student sees at inference time (see [`navsim/navsim/agents/autovla_agent.py:255-261`](navsim/navsim/agents/autovla_agent.py#L255-L261)). The summary text in the prompt is updated accordingly.
 
 ---
 

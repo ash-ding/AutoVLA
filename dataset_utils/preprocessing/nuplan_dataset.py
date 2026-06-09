@@ -46,6 +46,14 @@ class NuplanCoTAnnotationDataset(Dataset):
         else:
             self.needs_vision = bool(build_messages)
 
+        # Teacher camera-view count: 4 (front+back+left+right, default — matches
+        # the original training recipe) vs 3 (no back, matches the 3-camera
+        # student inference path in AutoVLAAgent.compute_features()).
+        # Set `include_back_view: false` in the dataset config to align teacher
+        # and student. Affects both NL CoT and symbolic CoT generation since
+        # both share this dataset class.
+        self.include_back_view = bool(config.get('include_back_view', True))
+
         if config['scene_filter'] is None:
             scene_filter = SceneFilter(
                 num_history_frames=4, # number of past frames to be extracted, frames are at 2Hz
@@ -134,10 +142,11 @@ class NuplanCoTAnnotationDataset(Dataset):
             front_camera_3 = images['front_camera'][2].image
             front_camera_4 = images['front_camera'][3].image
 
-            back_camera_1 = images['back_camera'][0].image
-            back_camera_2 = images['back_camera'][1].image
-            back_camera_3 = images['back_camera'][2].image
-            back_camera_4 = images['back_camera'][3].image
+            if self.include_back_view:
+                back_camera_1 = images['back_camera'][0].image
+                back_camera_2 = images['back_camera'][1].image
+                back_camera_3 = images['back_camera'][2].image
+                back_camera_4 = images['back_camera'][3].image
 
             left_camera_1 = images['left_camera'][0].image
             left_camera_2 = images['left_camera'][1].image
@@ -149,104 +158,125 @@ class NuplanCoTAnnotationDataset(Dataset):
             right_camera_3 = images['right_camera'][2].image
             right_camera_4 = images['right_camera'][3].image
 
+            # Summary sentence — kept byte-identical to the original recipe
+            # when include_back_view=True so existing CoT generation runs are
+            # reproducible. The 3-view variant rewrites it to match what the
+            # model actually sees. NOTE: the original 4-view sentence says
+            # "front left, front right, and back" but the per-video labels
+            # below are actually "back, left, right" — pre-existing wording
+            # bug preserved here intentionally; do not "fix" without a
+            # separate decision.
+            if self.include_back_view:
+                summary_text = (
+                    "Four cameras are mounted on the vehicle to perceive the surrounding environment. "
+                    "These cameras provide the front, front left, front right, and back views. "
+                    "The multi-view multi-frame camera images are organized in a video format. "
+                )
+            else:
+                summary_text = (
+                    "Three cameras are mounted on the vehicle to perceive the surrounding environment. "
+                    "These cameras provide the front, left, and right views. "
+                    "The multi-view multi-frame camera images are organized in a video format. "
+                )
+
+            user_content = [
+                # sensor inputs information
+                {"type": "text", "text": summary_text},
+
+                # front camera (always present)
+                {
+                    "type": "text",
+                    "text": "The video is from the front camera, capturing the history of the vehicle's front view from the past two seconds at 2Hz."
+                },
+                {
+                    "type": "video",
+                    "min_pixels": 400 * 400,
+                    "max_pixels": 400 * 400,
+                    "video": [
+                        "data:image/jpeg;base64," + process_image_input(front_camera_1),
+                        "data:image/jpeg;base64," + process_image_input(front_camera_2),
+                        "data:image/jpeg;base64," + process_image_input(front_camera_3),
+                        "data:image/jpeg;base64," + process_image_input(front_camera_4),
+                    ],
+                },
+            ]
+
+            # back camera (gated)
+            if self.include_back_view:
+                user_content.extend([
+                    {
+                        "type": "text",
+                        "text": "The video is from the back camera, capturing the history of the vehicle's back view from the past two seconds at 2Hz."
+                    },
+                    {
+                        "type": "video",
+                        "min_pixels": 400 * 400,
+                        "max_pixels": 400 * 400,
+                        "video": [
+                            "data:image/jpeg;base64," + process_image_input(back_camera_1),
+                            "data:image/jpeg;base64," + process_image_input(back_camera_2),
+                            "data:image/jpeg;base64," + process_image_input(back_camera_3),
+                            "data:image/jpeg;base64," + process_image_input(back_camera_4),
+                        ],
+                    },
+                ])
+
+            user_content.extend([
+                # left camera (always present)
+                {
+                    "type": "text",
+                    "text": "The video is from the left camera, capturing history of the vehicle's left view from the past two seconds at 2Hz."
+                },
+                {
+                    "type": "video",
+                    "min_pixels": 400 * 400,
+                    "max_pixels": 400 * 400,
+                    "video": [
+                        "data:image/jpeg;base64," + process_image_input(left_camera_1),
+                        "data:image/jpeg;base64," + process_image_input(left_camera_2),
+                        "data:image/jpeg;base64," + process_image_input(left_camera_3),
+                        "data:image/jpeg;base64," + process_image_input(left_camera_4),
+                    ],
+                },
+
+                # right camera (always present)
+                {
+                    "type": "text",
+                    "text": "The video is from the right camera, capturing history of the vehicle's right view from the past two seconds at 2Hz."
+                },
+                {
+                    "type": "video",
+                    "min_pixels": 400 * 400,
+                    "max_pixels": 400 * 400,
+                    "video": [
+                        "data:image/jpeg;base64," + process_image_input(right_camera_1),
+                        "data:image/jpeg;base64," + process_image_input(right_camera_2),
+                        "data:image/jpeg;base64," + process_image_input(right_camera_3),
+                        "data:image/jpeg;base64," + process_image_input(right_camera_4),
+                    ],
+                },
+
+                # vehicle state and instruction and additional information
+                {
+                    "type": "text",
+                    "text": f"The ego vehicle behavior in the past 4s is **{his_ego_action}**."
+                            f"The ego vehicle's current velocity is {velocity[0]:.3f} m/s at x-direction and {velocity[1]:.3f} m/s at y-direction." + \
+                            f"The ego vehicle's current acceleration is {acceleration[0]:.3f} m/s^2 at x-direction and {acceleration[1]:.3f} m/s^2 at y-direction. " + \
+                            f"The current driving command instruction of ego vehicle is: {instruction}, indicating the intended route direction. Note that the left and right driving commands cover turns, lane changes and sharp curves driving behavior."
+                },
+
+                # CoT Reasoning
+                get_cot_reasoning_prompt(fut_ego_action),
+            ])
+
             messages = [
                 {
                     "role": "system",
                     "content": "As a professional driver, how do you drive in the following scenario."
                 },
-
                 {
                     "role": "user",
-                    "content": [
-                        # sensor inputs information
-                        {
-                            "type": "text",
-                            "text": "Four cameras are mounted on the vehicle to perceive the surrounding environment. " + \
-                                    "These cameras provide the front, front left, front right, and back views. " +
-                                    "The multi-view multi-frame camera images are organized in a video format. "
-                        },
-
-                        # camera images
-                        {
-                            "type": "text",
-                            "text": "The video is from the front camera, capturing the history of the vehicle's front view from the past two seconds at 2Hz."
-                        },
-                        {
-                            "type": "video",
-                            "min_pixels": 400 * 400,
-                            "max_pixels": 400 * 400,
-                            "video": [
-                            # Front camera frames with IDs
-                                "data:image/jpeg;base64," + process_image_input(front_camera_1),
-                                "data:image/jpeg;base64," + process_image_input(front_camera_2),
-                                "data:image/jpeg;base64," + process_image_input(front_camera_3),
-                                "data:image/jpeg;base64," + process_image_input(front_camera_4),
-                            ],
-                        },
-
-                        {
-                            "type": "text",
-                            "text": "The video is from the back camera, capturing the history of the vehicle's back view from the past two seconds at 2Hz."
-                        },
-                        {
-                            "type": "video",
-                            "min_pixels": 400 * 400,
-                            "max_pixels": 400 * 400,
-                            "video": [
-                            # Back camera frames with IDs
-                                "data:image/jpeg;base64," + process_image_input(back_camera_1),
-                                "data:image/jpeg;base64," + process_image_input(back_camera_2),
-                                "data:image/jpeg;base64," + process_image_input(back_camera_3),
-                                "data:image/jpeg;base64," + process_image_input(back_camera_4),
-                            ],
-                        },
-
-                        {
-                            "type": "text",
-                            "text": "The video is from the left camera, capturing history of the vehicle's left view from the past two seconds at 2Hz."
-                        },
-                        {
-                            "type": "video",
-                            "min_pixels": 400 * 400,
-                            "max_pixels": 400 * 400,
-                            "video": [
-                            # Left camera frames with IDs
-                                "data:image/jpeg;base64," + process_image_input(left_camera_1),
-                                "data:image/jpeg;base64," + process_image_input(left_camera_2),
-                                "data:image/jpeg;base64," + process_image_input(left_camera_3),
-                                "data:image/jpeg;base64," + process_image_input(left_camera_4),
-                            ],
-                        },
-
-                        {
-                            "type": "text",
-                            "text": "The video is from the right camera, capturing history of the vehicle's right view from the past two seconds at 2Hz."
-                        },
-                        {
-                            "type": "video",
-                            "min_pixels": 400 * 400,
-                            "max_pixels": 400 * 400,
-                            "video": [
-                            # Right camera frames with IDs
-                                "data:image/jpeg;base64," + process_image_input(right_camera_1),
-                                "data:image/jpeg;base64," + process_image_input(right_camera_2),
-                                "data:image/jpeg;base64," + process_image_input(right_camera_3),
-                                "data:image/jpeg;base64," + process_image_input(right_camera_4),
-                            ],
-                        },
-
-                        # vehicle state and instruction and additional information
-                        {
-                            "type": "text",
-                            "text": f"The ego vehicle behavior in the past 4s is **{his_ego_action}**."
-                                    f"The ego vehicle's current velocity is {velocity[0]:.3f} m/s at x-direction and {velocity[1]:.3f} m/s at y-direction." + \
-                                    f"The ego vehicle's current acceleration is {acceleration[0]:.3f} m/s^2 at x-direction and {acceleration[1]:.3f} m/s^2 at y-direction. " + \
-                                    f"The current driving command instruction of ego vehicle is: {instruction}, indicating the intended route direction. Note that the left and right driving commands cover turns, lane changes and sharp curves driving behavior."
-                        },
-
-                        # CoT Reasoning
-                        get_cot_reasoning_prompt(fut_ego_action),
-                    ]
+                    "content": user_content,
                 },
             ]
             inputs['messages'] = messages

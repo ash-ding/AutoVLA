@@ -43,6 +43,12 @@ class WaymoE2ECoTAnnotationDataset(Dataset):
         self.config = config
         self.processor = processor
         self.split = self.config.get('dataset_split')
+
+        # Teacher camera-view count: 4 (front+front_left+front_right+back,
+        # default — matches the original recipe) vs 3 (no back, matches the
+        # 3-camera student inference path). Affects both NL CoT and symbolic
+        # CoT generation since both share this dataset class.
+        self.include_back_view = bool(config.get('include_back_view', True))
         
         self._filenames = tf.io.matching_files(
             os.path.join(self.config['dataset_path'], self.split + '_*.tfrecord-*'))
@@ -197,85 +203,98 @@ class WaymoE2ECoTAnnotationDataset(Dataset):
         for i in range(start_frame_index, end_frame_index, image_freq_ratio):
             front_right_video.append("data:image/jpeg;base64," + process_image_input(images['front_right_camera'][i]))
 
-        back_video = []
-        for i in range(start_frame_index, end_frame_index, image_freq_ratio):
-            back_video.append("data:image/jpeg;base64," + process_image_input(images['back_camera'][i]))
+        if self.include_back_view:
+            back_video = []
+            for i in range(start_frame_index, end_frame_index, image_freq_ratio):
+                back_video.append("data:image/jpeg;base64," + process_image_input(images['back_camera'][i]))
 
-        # create messages
-        messages = [
-            {   
-                "role": "system",
-                "content": "As a professional driver, how do you drive in the following scenario."
+        # Summary sentence — kept byte-identical to the original recipe when
+        # include_back_view=True so existing CoT runs are reproducible.
+        if self.include_back_view:
+            summary_text = ("Four cameras are mounted on the vehicle to perceive the surrounding environment. " +
+                            "These cameras provide the front, front left, front right, and back views. " +
+                            "The multi-view multi-frame camera images are organized in a video format. ")
+        else:
+            summary_text = ("Three cameras are mounted on the vehicle to perceive the surrounding environment. " +
+                            "These cameras provide the front, front left, and front right views. " +
+                            "The multi-view multi-frame camera images are organized in a video format. ")
+
+        user_content = [
+            # sensor inputs information
+            {"type": "text", "text": summary_text},
+
+            # camera images
+            {
+                "type": "text",
+                "text": "The video is from the front camera, capturing the history of the vehicle's front view from the past four seconds at 1Hz."
+            },
+            {
+                "type": "video",
+                "min_pixels": 400 * 400,
+                "max_pixels": 400 * 400,
+                "video": front_video,
             },
 
             {
+                "type": "text",
+                "text": "The video is from the front left camera, capturing the history of the vehicle's front left view from the past four seconds at 1Hz."
+            },
+            {
+                "type": "video",
+                "min_pixels": 400 * 400,
+                "max_pixels": 400 * 400,
+                "video": front_left_video,
+            },
+
+            {
+                "type": "text",
+                "text": "The video is from the front right camera, capturing the history of the vehicle's front right view from the past four seconds at 1Hz."
+            },
+            {
+                "type": "video",
+                "min_pixels": 400 * 400,
+                "max_pixels": 400 * 400,
+                "video": front_right_video,
+            },
+        ]
+
+        if self.include_back_view:
+            user_content.extend([
+                {
+                    "type": "text",
+                    "text": "The video is from the back camera, capturing the history of the vehicle's back view from the past four seconds at 1Hz."
+                },
+                {
+                    "type": "video",
+                    "min_pixels": 400 * 400,
+                    "max_pixels": 400 * 400,
+                    "video": back_video,
+                },
+            ])
+
+        user_content.extend([
+            # vehicle state and instruction and additional information
+            {
+                "type": "text",
+                "text": f"The ego vehicle behavior in the past 4s is **{his_ego_action}**."
+                        f"The ego vehicle's current velocity is {velocity[0]:.3f} m/s at x-direction and {velocity[1]:.3f} m/s at y-direction." + \
+                        f"The ego vehicle's current acceleration is {acceleration[0]:.3f} m/s^2 at x-direction and {acceleration[1]:.3f} m/s^2 at y-direction. " + \
+                        f"The current driving command instruction of ego vehicle is: {instruction}, indicating the intended route direction. Note that the left and right driving commands cover turns, lane changes and sharp curves driving behavior."
+            },
+
+            # CoT Reasoning
+            get_cot_reasoning_prompt(fut_ego_action),
+        ])
+
+        # create messages
+        messages = [
+            {
+                "role": "system",
+                "content": "As a professional driver, how do you drive in the following scenario."
+            },
+            {
                 "role": "user",
-                "content": [
-                    # sensor inputs information
-                    {
-                        "type": "text", 
-                        "text": "Four cameras are mounted on the vehicle to perceive the surrounding environment. " +
-                                "These cameras provide the front, front left, front right, and back views. " +
-                                "The multi-view multi-frame camera images are organized in a video format. "
-                    },
-
-                    # camera images
-                    {
-                        "type": "text", 
-                        "text": "The video is from the front camera, capturing the history of the vehicle's front view from the past four seconds at 1Hz."
-                    },
-                    {
-                        "type": "video",
-                        "min_pixels": 400 * 400,
-                        "max_pixels": 400 * 400,
-                        "video": front_video,
-                    },
-
-                    {
-                        "type": "text", 
-                        "text": "The video is from the front left camera, capturing the history of the vehicle's front left view from the past four seconds at 1Hz."
-                    },
-                    {
-                        "type": "video",
-                        "min_pixels": 400 * 400,
-                        "max_pixels": 400 * 400,
-                        "video": front_left_video,
-                    },
-
-                    {
-                        "type": "text", 
-                        "text": "The video is from the front right camera, capturing the history of the vehicle's front right view from the past four seconds at 1Hz."
-                    },
-                    {
-                        "type": "video",
-                        "min_pixels": 400 * 400,
-                        "max_pixels": 400 * 400,
-                        "video": front_right_video,
-                    },
-
-                    {
-                        "type": "text", 
-                        "text": "The video is from the back camera, capturing the history of the vehicle's back view from the past four seconds at 1Hz."
-                    },
-                    {
-                        "type": "video",
-                        "min_pixels": 400 * 400,
-                        "max_pixels": 400 * 400,
-                        "video": back_video,
-                    },
-    
-                    # vehicle state and instruction and additional information
-                    {
-                        "type": "text", 
-                        "text": f"The ego vehicle behavior in the past 4s is **{his_ego_action}**."
-                                f"The ego vehicle's current velocity is {velocity[0]:.3f} m/s at x-direction and {velocity[1]:.3f} m/s at y-direction." + \
-                                f"The ego vehicle's current acceleration is {acceleration[0]:.3f} m/s^2 at x-direction and {acceleration[1]:.3f} m/s^2 at y-direction. " + \
-                                f"The current driving command instruction of ego vehicle is: {instruction}, indicating the intended route direction. Note that the left and right driving commands cover turns, lane changes and sharp curves driving behavior."
-                    },
-
-                    # CoT Reasoning
-                    get_cot_reasoning_prompt(fut_ego_action),
-                ]
+                "content": user_content,
             },
         ]
 
