@@ -1,0 +1,30 @@
+name: symbolic-cot-gpt4o-mini-nuplan-mini-rlib2.0
+description: |
+  Symbolic CoT preprocessing on navmini using rlib2.0 (Datalog¬ + arithmetic,
+  numerical PERCEPTION, `:=` grounded FACTS, single Datalog rule). GPT-4o-mini
+  backend. Verifier uses Z3 for L4 propositional check on the rule body.
+
+# Annotation backend
+annotation_backend: openai
+api_model: gpt-4o-mini
+# rlib2.0 prompt is longer (5-stage with `:=` examples) and the model needs
+# more room to emit OPERATIONS + FACTS with arithmetic. Bumped from 1500 → 2500.
+max_tokens: 2500
+image_detail: low
+
+# Sampling
+temperature: 0.1
+top_p: 0.9
+seed: 42
+
+# asyncio concurrency for OpenAI backend
+concurrency: 10
+
+# rlib2.0: 5-stage Datalog¬ + arithmetic
+rlib_dir: ./symdrive/rlib2_0/rlib
+cot_style: rlib2.0
+
+# Dataset — 'placeholder' swapped to 'navsim_logs' / 'sensor_blobs' at runtime.
+dataset_name: nuplan
+dataset_path: /export/scratch_large/pouya/autovla_dataset/nuplan/placeholder/mini
+scene_filter: /export/scratch_large/ding/code/AutoVLA/navsim/navsim/planning/script/config/common/train_test_split/scene_filter/navmini.yaml

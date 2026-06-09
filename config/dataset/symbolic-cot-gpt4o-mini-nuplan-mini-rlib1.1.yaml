@@ -1,0 +1,27 @@
+name: symbolic-cot-gpt4o-mini-nuplan-mini-rlib1.1
+description: |
+  Symbolic CoT preprocessing on navmini using rlib1.1 (PL without OPERATIONS;
+  ego declared as Ego entity in PERCEPTION). GPT-4o-mini backend.
+
+# Annotation backend
+annotation_backend: openai
+api_model: gpt-4o-mini
+max_tokens: 1500
+image_detail: low
+
+# Sampling
+temperature: 0.1
+top_p: 0.9
+seed: 42
+
+# asyncio concurrency for OpenAI backend
+concurrency: 10
+
+# rlib1.1: 4-stage prompt (PERCEPTION/FACTS/RULES/ACTION), ego in PERCEPTION
+rlib_dir: ./symdrive/rlib1_1/rlib
+cot_style: rlib1.1
+
+# Dataset — 'placeholder' swapped to 'navsim_logs' / 'sensor_blobs' at runtime.
+dataset_name: nuplan
+dataset_path: /export/scratch_large/pouya/autovla_dataset/nuplan/placeholder/mini
+scene_filter: /export/scratch_large/ding/code/AutoVLA/navsim/navsim/planning/script/config/common/train_test_split/scene_filter/navmini.yaml
