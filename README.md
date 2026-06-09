@@ -83,7 +83,7 @@ bash scripts/run_nuplan_preprocess_nl.sh
 # 2) nuScenes NL CoT + no-CoT + no-CoT test set (DriveLM splits CoT vs. no-CoT)
 bash scripts/run_nuscenes_preprocess_nl.sh
 
-# 3) nuPlan Symbolic CoT (GPT-4o-mini + RLIB, on the nuplan_cot bucket)
+# 3) nuPlan Symbolic CoT (GPT-4o-mini + rlib1.0, on the nuplan_cot bucket)
 bash scripts/run_nuplan_preprocess_symbolic.sh
 
 # 4) nuScenes Symbolic CoT (same, on the nuscenes_cot bucket)
@@ -96,7 +96,7 @@ What each script does, in one line:
 |---|---|---|
 | `run_nuplan_preprocess_nl.sh` | Generate NL CoT with Qwen2.5-VL-72B-AWQ on the `nuplan_cot` bucket; generate no-CoT metadata on `nuplan_nocot`; generate no-CoT navtest set | `nuplan_nl_reasoning_samples_Qwen2.5_VL_72B_Instruct_AWQ_45600/`<br>`nuplan_action_only_samples_120682/`<br>`nuplan_test_samples_12146/` |
 | `run_nuscenes_preprocess_nl.sh` | train split: DriveLM splits CoT vs. no-CoT into two flat sibling dirs; val split is treated as the test set (no DriveLM) | `nuscenes_nl_reasoning_samples_2895/`<br>`nuscenes_action_only_samples_16135/`<br>`nuscenes_test_samples_5569/` |
-| `run_nuplan_preprocess_symbolic.sh` | Generate symbolic CoT via gpt-4o-mini + RLIB on the `nuplan_cot` bucket; **does not depend on NL CoT by default** | `nuplan_symbolic_reasoning_samples_gpt_4o_mini_45600/` |
+| `run_nuplan_preprocess_symbolic.sh` | Generate symbolic CoT via gpt-4o-mini + rlib1.0 on the `nuplan_cot` bucket; **does not depend on NL CoT by default** | `nuplan_symbolic_reasoning_samples_gpt_4o_mini_45600/` |
 | `run_nuscenes_preprocess_symbolic.sh` | Same, on the `nuscenes_cot` bucket | `nuscenes_symbolic_reasoning_samples_gpt_4o_mini_2895/` |
 
 ### These are example invocations — tune them for your setup
@@ -107,6 +107,7 @@ The four scripts hardcode the **scaling token list path** (185k), **model name/p
 - To swap models: edit `pretrained_model_path` or `api_model` in the relevant `config/dataset/<name>.yaml`, then update the output directory suffix accordingly
 - To change vLLM batch / TP / sequence length: edit `batch_size` / `max_num_seqs` / `max_model_len` / `tensor_parallel_size` in `config/dataset/qwen2.5-vl-72B-nuplan-trainval.yaml`
 - To switch the symbolic CoT backend: edit `annotation_backend` / `api_model` in `symbolic-cot-gpt4o-mini-*.yaml`
+- **Symbolic CoT version (`cot_style`)** — current default `rlib1.0` (predefined PL rules, 5 stages: PERCEPTION / OPERATIONS / FACTS / RULES / ACTION). Prototype configs for `rlib1.1` (PL without OPERATIONS, ego as a PERCEPTION entity) and `rlib2.0` (Datalog¬ + arithmetic with Z3-backed verifier) live at `config/dataset/symbolic-cot-gpt4o-mini-nuplan-mini-rlib{1.1,2.0}.yaml`. Versions are auto-discovered from `symdrive/rlib<digits>(_<digits>)+/` — see [`symdrive/README.md`](./symdrive/README.md) for the version system and how to add new ones.
 - For DP fanout across multiple GPUs: `DP_SIZE=8 bash scripts/run_nuplan_preprocess_nl.sh`
 - **Teacher camera-view count (`include_back_view`)** — applies to **both** NL CoT and symbolic CoT generation across all three datasets (nuPlan / nuScenes / Waymo). Default `true` (4 views: front + back + left/front_left + right/front_right) reproduces the original recipe. Set `include_back_view: false` in the dataset YAML to drop the back camera and feed the teacher the same 3-camera view the student sees at inference time (see [`navsim/navsim/agents/autovla_agent.py:255-261`](navsim/navsim/agents/autovla_agent.py#L255-L261)). The summary text in the prompt is updated accordingly.
 
@@ -245,16 +246,17 @@ python tools/preprocessing/nusc_sample_generation.py \
 
 ### 3.4 `tools/preprocessing/symbolic_cot_sample_generation.py` — Symbolic CoT generation
 
-**Purpose**: re-walk the raw dataset with the prompt rewritten in RLIB symbolic format, asking the VLM/LLM to emit a five-section CoT (`PERCEPTION / OPERATIONS / FACTS / RULES / ACTION`). Optionally takes a previous NL CoT directory as warm-start reference.
+**Purpose**: re-walk the raw dataset with the prompt rewritten in symbolic format (the specific design selected by `cot_style`), asking the VLM/LLM to emit a structured CoT. Default `cot_style: rlib1.0` produces the original 5-section PL CoT (`PERCEPTION / OPERATIONS / FACTS / RULES / ACTION`); other versions (`rlib1.1`, `rlib2.0`, ...) are auto-discovered from `symdrive/` and selected via config. Optionally takes a previous NL CoT directory as warm-start reference.
 
 | Flag | Type / default | Description |
 |---|---|---|
 | `--config <name>` | **required** | YAML config name. Example: `dataset/symbolic-cot-gpt4o-mini-nuplan-trainval` |
 | `--output_dir <path>` | **required** | Output directory |
 | `--backend {vllm,openai}` | reads YAML | Override YAML |
-| `--rlib_dir <path>` | `./RLIB` | RLIB rule library directory |
+| `--cot-style <name>` | reads YAML, fallback `rlib1.0` | Symbolic-CoT version to use. Auto-discovered from any `symdrive/rlib<digits>(_<digits>)+/` subdir containing `prompt.py` + `verifier.py`. Current versions: `rlib1.0`, `rlib1.1`, `rlib2.0`. See [`symdrive/README.md`](./symdrive/README.md) |
+| `--rlib_dir <path>` | reads YAML, fallback `./symdrive/rlib1_0/rlib` | Ontology directory for the selected `cot_style`. Must match the version (e.g. `./symdrive/rlib2_0/rlib` for `rlib2.0`) |
 | `--nl-cot-dir <path>` | None | **Optional**: directory of NL CoT JSONs. For each matched token, the previous `cot_output` is used as an action hint + an in-prompt translation reference. Missing files / empty `cot_output` print a warning to stderr and fall back |
-| `--free-rules` / `--no-free-rules` | default `--free-rules` | Free-rule mode lets the LLM compose rules freely; `--no-free-rules` reverts to the predefined RLIB rule set |
+| `--free-rules` / `--no-free-rules` | default `--free-rules` | Free-rule mode lets the LLM compose rules freely; `--no-free-rules` reverts to the predefined rule set (rlib1.x only — rlib2.0 has no predefined rules) |
 | `--path-prefix-map FROM=TO` | None (repeatable) | Cross-host path rewriting, e.g. `--path-prefix-map /data=./data` |
 | `--sample-ids-json` / `--sample-ids-key` / `--seed` / `--resume` / `--dp_size` / `--tp_size` / `--num_parts` / `--sample_num` | same as §3.1 | |
 
@@ -267,7 +269,7 @@ python -m tools.preprocessing.symbolic_cot_sample_generation \
     --output_dir /data/demo_symbolic_cot \
     --sample-ids-json /data/nuplan_nuscenes_train_mix_185k/scaling_185k_token_list.json \
     --sample-ids-key nuplan_cot \
-    --rlib_dir ./RLIB \
+    --rlib_dir ./symdrive/rlib1_0/rlib \
     --dp_size 1 \
     --resume
 
@@ -305,6 +307,7 @@ python -m tools.preprocessing.symbolic_cot_sample_generation \
 ## 5. Related docs
 
 - [`AutoVLA.README.md`](./AutoVLA.README.md) — original paper README (dataset downloads, training commands, citation)
+- [`symdrive/README.md`](./symdrive/README.md) — versioned symbolic-CoT designs (rlib1.0 / 1.1 / 2.0) and how to add new ones
 - [`tools/vessl/README.md`](./tools/vessl/README.md) — vessl-platform data loading helpers
 - [`scripts/`](./scripts/) — all shell entry points
 - [`tools/preprocessing/`](./tools/preprocessing/) — four Python entry points + `sample_selection_utils.py`
