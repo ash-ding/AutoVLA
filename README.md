@@ -101,15 +101,28 @@ What each script does, in one line:
 
 ### These are example invocations — tune them for your setup
 
-The four scripts hardcode the **scaling token list path** (185k), **model name/path**, **output directory names** (sample-count and model-slug suffixes), and **`dp_size`** that match our 185k mix + Qwen2.5-VL-72B-AWQ + gpt-4o-mini reference configuration. **Adjust them before running on your data**:
+The four scripts default the **scaling token list path** (185k), **model name/path**, **output directory names** (sample-count and model-slug suffixes), and **`dp_size`** to our 185k mix + Qwen2.5-VL-72B-AWQ + gpt-4o-mini reference configuration. The two **NL** scripts hardcode these inline (edit the script). The two **symbolic** scripts are fully env-var-driven — override `CONFIG_NAME`, `OUTPUT_DIR`, `SCALING_TOKEN_LIST`, `SAMPLE_IDS_KEY`, `RLIB_DIR`, `TP_SIZE`, `EXTRA_ARGS` inline without editing, e.g.:
 
-- To use 10k / 50k / 100k instead of 185k: edit `SCALING_TOKEN_LIST` at the top of each script
+```bash
+# Run the 4v45 ablation arm of the symbolic nuPlan pipeline
+CONFIG_NAME=dataset/qwen2.5-vl-72B-nuplan-symbolic-4v45 \
+OUTPUT_DIR=/data/nuplan_symbolic_4v45 \
+bash scripts/run_nuplan_preprocess_symbolic.sh
+```
+
+**Adjust them before running on your data**:
+
+- To use 10k / 50k / 100k instead of 185k: edit `SCALING_TOKEN_LIST` at the top of each NL script (or pass it as an env var to the symbolic scripts)
 - To swap models: edit `pretrained_model_path` or `api_model` in the relevant `config/dataset/<name>.yaml`, then update the output directory suffix accordingly
 - To change vLLM batch / TP / sequence length: edit `batch_size` / `max_num_seqs` / `max_model_len` / `tensor_parallel_size` in `config/dataset/qwen2.5-vl-72B-nuplan-trainval.yaml`
 - To switch the symbolic CoT backend: edit `annotation_backend` / `api_model` in `symbolic-cot-gpt4o-mini-*.yaml`
 - **Symbolic CoT version (`cot_style`)** — current default `rlib1.0` (predefined PL rules, 5 stages: PERCEPTION / OPERATIONS / FACTS / RULES / ACTION). Prototype configs for `rlib1.1` (PL without OPERATIONS, ego as a PERCEPTION entity) and `rlib2.0` (Datalog¬ + arithmetic with Z3-backed verifier) live at `config/dataset/symbolic-cot-gpt4o-mini-nuplan-mini-rlib{1.1,2.0}.yaml`. Versions are auto-discovered from `symdrive/rlib<digits>(_<digits>)+/` — see [`symdrive/README.md`](./symdrive/README.md) for the version system and how to add new ones.
 - For DP fanout across multiple GPUs: `DP_SIZE=8 bash scripts/run_nuplan_preprocess_nl.sh`
-- **Teacher camera-view count (`include_back_view`)** — applies to **both** NL CoT and symbolic CoT generation across all three datasets (nuPlan / nuScenes / Waymo). Default `true` (4 views: front + back + left/front_left + right/front_right) reproduces the original recipe. Set `include_back_view: false` in the dataset YAML to drop the back camera and feed the teacher the same 3-camera view the student sees at inference time (see [`navsim/navsim/agents/autovla_agent.py:255-261`](navsim/navsim/agents/autovla_agent.py#L255-L261)). The summary text in the prompt is updated accordingly.
+- **Teacher camera-view selection** — two orthogonal dataset-YAML knobs, applied to **both** NL CoT and symbolic CoT generation:
+  - `include_back_view` (default `true`) — `false` drops the back camera (4-view → 3-view), matching the 3-camera view the student sees at inference.
+  - `side_cam_yaw: {45, 90}` (default `90`, **nuPlan only**) — `90` uses the 90° pure-side cameras (CAM_L1/R1); `45` uses the 45° forward-canted cameras (CAM_L0/R0). Prompt text is identical; only the physical source changes.
+
+  The matching **student-side** knob is `nuplan_side_field: {'left','front_left'}` (default `'left'`) under the `model:` block of the **training** YAML — keep it consistent with the teacher (90↔`'left'`, 45↔`'front_left'`). Ready-made rlib1.0 ablation configs: `config/dataset/qwen2.5-vl-72B-{nuplan-symbolic-4v90,nuplan-symbolic-4v45,nuplan-symbolic-3v90,nuscenes-symbolic-4v,nuscenes-symbolic-3v}.yaml`.
 
 ---
 

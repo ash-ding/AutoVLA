@@ -34,12 +34,16 @@ CLAUDE.vessl.md
 
 # logs
 runs/*
+# runs/ is a symlink to /backup/runs on this box — ignore the symlink itself too
+/runs
 
 # env
 .envrc
 
 # model_weights
 model_weights/*
+# model_weights/ is a symlink to /backup/autovla_models — ignore the symlink itself too
+/model_weights
 
 # docs (keep local only)
 docs/

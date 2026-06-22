@@ -45,6 +45,11 @@ if __name__ == "__main__":
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--config", type=str, required=True)
     parser.add_argument("--max_steps", type=int, default=-1, help="Max training steps (-1 for no limit)")
+    parser.add_argument("--output_dir", type=str, default=None,
+                        help="Output dir for checkpoints + CSV logs. Overrides the "
+                             "default runs/sft/<config.name>/<timestamp> layout. The "
+                             "timestamp is NOT appended when set — pass a fully "
+                             "resolved path.")
     args = parser.parse_args()
     seed_everything(args.seed)
 
@@ -109,11 +114,15 @@ if __name__ == "__main__":
     )
 
     current_date = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    # Per-config subdir keeps multiple SFT runs (e.g. ablation arms) from
-    # interleaving timestamps in one flat dir. Falls back to plain timestamp
-    # when the config has no `name` field (legacy).
-    run_name = config.get('name')
-    save_dir = f"runs/sft/{run_name}/{current_date}" if run_name else f"runs/sft/{current_date}"
+    # --output_dir wins (used verbatim, no timestamp appended). Otherwise a
+    # per-config subdir keeps multiple SFT runs (e.g. ablation arms) from
+    # interleaving timestamps in one flat dir, falling back to a plain
+    # timestamp when the config has no `name` field (legacy).
+    if args.output_dir:
+        save_dir = args.output_dir
+    else:
+        run_name = config.get('name')
+        save_dir = f"runs/sft/{run_name}/{current_date}" if run_name else f"runs/sft/{current_date}"
     
     trainer = pl.Trainer(
         num_nodes=1,
