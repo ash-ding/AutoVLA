@@ -307,7 +307,186 @@ python -m tools.preprocessing.symbolic_cot_sample_generation \
 
 ---
 
-## 4. Debugging tips
+## 4. Training
+
+Both stages are launched directly from the repo root with conda env `autovla` active.
+
+### 4.1 Supervised Fine-Tuning (SFT)
+
+```bash
+# Full-config run (8 GPU FSDP; defaults from the YAML)
+python tools/run_sft.py --config training/qwen2.5-vl-3B-mix-sft-10k-rlib1.0-4v90
+
+# Override output dir or resume from a previous epoch
+python tools/run_sft.py --config training/<name> --output_dir /backup/runs/sft/my_exp
+python tools/run_sft.py --config training/<name> --ckpt_path /backup/runs/sft/<name>/<ts>/epoch=2-loss=0.91.ckpt
+```
+
+Outputs land in `runs/sft/<config-name>/<YYYY-MM-DD_HH-MM-SS>/epoch={E}-loss={V:.4f}.ckpt` (PL `ModelCheckpoint` keeps top-3 by `val_loss`). `runs/` is a symlink to `/backup/runs/` on this machine.
+
+> If you are training, **`PYTORCH_ALLOC_CONF=expandable_segments:True`** in front of the command mitigates mid-run OOM from allocator fragmentation on VLM long-CoT samples — see [`AutoVLA.README.md`](./AutoVLA.README.md) §4 for the full SFT recipe.
+
+### 4.2 Reinforcement Fine-Tuning (RFT, GRPO)
+
+```bash
+# Edit YAML's model.sft_model_path to point at the SFT ckpt you want to start from, then:
+python tools/run_rft.py --config training/qwen2.5-vl-3B-nuplan-grpo-cot
+```
+
+Outputs land in `runs/grpo/<config-name>/<YYYY-MM-DD_HH-MM-SS>/rft-step{N}-reward{R:.4f}.ckpt` (every 500 train steps, `save_top_k=-1`). See [`AutoVLA.README.md`](./AutoVLA.README.md) §4 for hyperparameters.
+
+---
+
+## 5. Evaluation
+
+Two open-loop / closed-loop eval setups are supported:
+
+| Eval | Script | Data | Speed (single GPU) |
+|---|---|---|---|
+| **nuScenes open-loop** (L2 + collision) | `tools/eval/nusc_eval_vllm.py` | `nuscenes_test_samples_5569` + UniAD seg | ~10–15 min (vLLM) |
+| **nuPlan PDM closed-loop** (PDM-score) | `tools/eval/nuplan_pdm_eval_vllm.py` | `nuplan_test_samples_12146` + navtest metric cache | ~1–2 h (vLLM) |
+
+The default eval backend is **vLLM** (~6× faster than HF on the same GPU). If you prefer the original HF path, see [`AutoVLA.README.md`](./AutoVLA.README.md) §5 — the legacy `tools/eval/nusc_eval.py` (HF) and `navsim/scripts/evaluation/run_autovla_agent_pdm_score_evaluation.sh` (HF agent) still work.
+
+### Why DP (data parallelism), not TP (tensor parallelism)?
+
+Both vLLM eval scripts support `--dp_size N` to fan out across N GPUs (one full model copy per GPU, samples sharded round-robin). We do **not** use tensor parallelism (`tensor_parallel_size`) because:
+
+- The SFT model is 3B parameters (~7 GB in bf16). A single A100 80 GB or L40S 46 GB has plenty of headroom for the model + KV cache pool.
+- TP splits one model across N GPUs and adds an NCCL all-reduce **per forward step**. For a small model this overhead dominates; TP would be **slower** than single-GPU.
+- DP scales near-linearly with GPU count because each shard is fully independent (no cross-GPU comm during eval).
+
+Rule of thumb for this codebase: **single GPU works**; if you have N GPUs free, set `DP_SIZE=N` to get ~N× wall-clock speedup. Reserve TP for the 72B teacher (in preprocessing); the 3B student does not need it.
+
+### 5.1 One-time prep: convert SFT ckpt to HF safetensors
+
+vLLM only ingests HF-format dirs. Convert each SFT ckpt **once**:
+
+```bash
+python tools/convert_sft_ckpt_to_hf.py \
+    --sft_ckpt /backup/runs/sft/<config-name>/<ts>/epoch=N-loss=*.ckpt \
+    --base_model_path /backup/autovla_models/Qwen2.5-VL-3B-Instruct \
+    --codebook_path codebook_cache/agent_vocab.pkl \
+    --out_dir /backup/hf_ckpt/<arm> \
+    --verify
+```
+
+The converter asserts `0 missing, 0 unexpected` keys after load (the silent prefix-strip bug that hid in upstream `nusc_eval.py` for months will trip the assert here — if it ever returns, the conversion will fail loudly instead of producing a garbage HF model). 2–4 min one-time cost. Output is `~7.5 GB`.
+
+### 5.2 nuScenes eval (open-loop L2 + collision)
+
+Single-GPU (default):
+```bash
+CONFIG=config/training/eval-4v90-nuscenes.yaml \
+HF_DIR=/backup/hf_ckpt/4v90 \
+OUTPUT_DIR=/data/eval_results/4v90/nuscenes \
+bash scripts/run_nusc_eval_vllm.sh
+```
+
+Multi-GPU data parallelism (~N× faster) — 8 GPU example:
+```bash
+CONFIG=config/training/eval-4v90-nuscenes.yaml \
+HF_DIR=/backup/hf_ckpt/4v90 \
+OUTPUT_DIR=/data/eval_results/4v90/nuscenes \
+DP_SIZE=8 \
+CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 \
+bash scripts/run_nusc_eval_vllm.sh
+```
+Set `DP_SIZE=N` and list N GPU IDs in `CUDA_VISIBLE_DEVICES` to scale to any GPU count.
+
+| Env var | Default | Description |
+|---|---|---|
+| `CONFIG` | (required) | nuScenes eval YAML (`config/training/eval-<arm>-nuscenes.yaml`) |
+| `HF_DIR` | (required) | HF safetensors dir from §5.1 |
+| `OUTPUT_DIR` | (required) | Where to write `results.txt` and `per_sample/*.json` |
+| `SEG_DATA_PATH` | `/data/nusc_eval_seg_6s` | UniAD seg `.pt` dir (one file per token) |
+| `NUM_SAMPLES` | all | Cap (e.g. `20` for smoke test) |
+| `BATCH_SIZE` | `64` | vLLM submission chunk; continuous batching handles within-batch overlap |
+| `GPU_MEM_UTIL` | `0.85` | Lower if multiple processes share the GPU |
+| `SAVE_PER_SAMPLE_RESULT` | `true` | Set `false` to skip per-sample JSON dumps and write only the aggregate table. |
+| `DP_SIZE` | `1` | Set to `N` (≤ # GPUs in `CUDA_VISIBLE_DEVICES`) to fan out into N data-parallel workers. Near-linear speedup. |
+| `CUDA_VISIBLE_DEVICES` | `0` | For `DP_SIZE=N` set to N GPU IDs (e.g. `0,1,2,3,4,5,6,7`) |
+
+Outputs:
+- `<OUTPUT_DIR>/results.txt` — aggregate STP3 + UniAD planning metric tables (same format as upstream `nusc_eval.py`)
+- `<OUTPUT_DIR>/per_sample/<token>.json` — one JSON per sample with `cot_trace`, `pred_trajectory`, `gt_trajectory_raw`, `future_mask` (essential for cross-arm qualitative analysis; ~17 MB / arm; opt-out via `SAVE_PER_SAMPLE_RESULT=false`)
+
+### 5.3 nuPlan PDM-score eval (closed-loop)
+
+**Prereq**: navtest metric cache. Build once:
+```bash
+bash scripts/run_navtest_metric_caching.sh    # ~50 min on 40 CPU
+```
+Output lands at `$NAVSIM_EXP_ROOT/navtest_metric_cache/`.
+
+Single-GPU:
+```bash
+CONFIG=config/training/qwen2.5-vl-3B-mix-sft-10k-rlib1.0-4v90.yaml \
+HF_DIR=/backup/hf_ckpt/4v90 \
+METRIC_CACHE_PATH=/data/navsim_exp/navtest_metric_cache \
+OUTPUT_DIR=/data/eval_results/4v90/nuplan \
+bash scripts/run_nuplan_pdm_eval_vllm.sh
+```
+
+Multi-GPU data parallelism — 8 GPU example:
+```bash
+CONFIG=config/training/qwen2.5-vl-3B-mix-sft-10k-rlib1.0-4v90.yaml \
+HF_DIR=/backup/hf_ckpt/4v90 \
+METRIC_CACHE_PATH=/data/navsim_exp/navtest_metric_cache \
+OUTPUT_DIR=/data/eval_results/4v90/nuplan \
+DP_SIZE=8 \
+CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 \
+bash scripts/run_nuplan_pdm_eval_vllm.sh
+```
+Same `DP_SIZE=N` + N-GPU `CUDA_VISIBLE_DEVICES` pattern. Inference scales ~N×; PDM sim phase is CPU-bound (16-thread default already saturates ~16 cores), so end-to-end speedup is a bit less than N×.
+
+| Env var | Default | Description |
+|---|---|---|
+| `CONFIG` | (required) | SFT YAML (so `model.nuplan_side_field` flows through to the predictor) |
+| `HF_DIR` | (required) | HF safetensors dir from §5.1 |
+| `METRIC_CACHE_PATH` | (required) | navtest metric cache dir |
+| `OUTPUT_DIR` | (required) | Per-eval `<ts>/` subdir is auto-created here |
+| `JSON_DATA_PATH` | `/data/nuplan_test/test_samples_12146` | Per-token JSON inputs |
+| `SENSOR_DATA_PATH` | `/data/nuPlan/sensor_blobs/test` | Camera JPGs |
+| `TRAIN_TEST_SPLIT` | `navtest` | navsim `train_test_split` YAML |
+| `BATCH_SIZE` | `32` | vLLM inference batch |
+| `PDM_WORKERS` | `16` | ThreadPoolExecutor workers for PDM sim (CPU-bound) |
+| `GPU_MEM_UTIL` | `0.85` | Lower if multiple processes share the GPU |
+| `NUPLAN_SIDE_FIELD` | from `CONFIG` | `'left'` (CAM_L1/R1) or `'front_left'` (CAM_L0/R0) |
+| `SAVE_PER_SAMPLE_RESULT` | `true` | Set `false` to skip per-sample JSON dumps and write only the aggregate CSV. |
+| `DP_SIZE` | `1` | Set to `N` (≤ # GPUs in `CUDA_VISIBLE_DEVICES`) to fan out into N data-parallel workers. Inference scales ~N×; PDM sim phase is CPU-bound so total speedup is somewhat less. |
+| `CUDA_VISIBLE_DEVICES` | `0` | For `DP_SIZE=N` set to N GPU IDs (e.g. `0,1,2,3,4,5,6,7`) |
+
+Architecture: **Phase 1** submits all 12k+ prompts to vLLM in batches (continuous batching). **Phase 2** runs PDM simulator + scorer on each `(token, trajectory)` in a CPU thread pool. Per-sample JSONs land in `<OUTPUT_DIR>/<ts>/per_sample/*.json` (one file per nuPlan token; opt-out via `SAVE_PER_SAMPLE_RESULT=false`); the aggregate CSV is `<OUTPUT_DIR>/<ts>/<ts>.csv`.
+
+### 5.4 Saved artifacts per eval
+
+For both eval types, each sample gets a JSON with the full reasoning trace and predicted trajectory — essential for cross-arm qualitative comparison (failure case inspection, reasoning style differences, etc.):
+
+```json
+{
+  "token": "...",
+  "cot_trace": "<think>\nPERCEPTION:\n  v_1 = Car {position: Front, ...} ...",
+  "pred_trajectory": [[x, y, heading]] × 10,
+  "gt_trajectory_raw": [[x, y, heading]] × 10,
+  "future_mask": [1.0, ...],
+  "scores": { ... PDM only ... },
+  "backend": "vllm"
+}
+```
+
+### 5.5 Falling back to HF (upstream-style)
+
+The legacy HF eval still works for both setups — useful when you want bit-exact reproduction of paper numbers or are debugging vLLM:
+
+- nuScenes: `tools/eval/nusc_eval.py` (DDP via `torchrun`, supports `--per_sample_dir`)
+- nuPlan PDM: `navsim/scripts/evaluation/run_autovla_agent_pdm_score_evaluation.sh` (`ray_distributed` worker)
+
+See [`AutoVLA.README.md`](./AutoVLA.README.md) §5 for the original invocations.
+
+---
+
+## 6. Debugging tips
 
 - **Smoke-test first**: try the 10k scaling list (`/data/nuplan_nuscenes_train_mix_10k/scaling_10k_token_list.json`) before scaling to 185k.
 - **Resume**: every script supports `--resume`, so re-running after a crash skips completed tokens.
@@ -317,7 +496,7 @@ python -m tools.preprocessing.symbolic_cot_sample_generation \
 
 ---
 
-## 5. Related docs
+## 7. Related docs
 
 - [`AutoVLA.README.md`](./AutoVLA.README.md) — original paper README (dataset downloads, training commands, citation)
 - [`symdrive/README.md`](./symdrive/README.md) — versioned symbolic-CoT designs (rlib1.0 / 1.1 / 2.0) and how to add new ones
