@@ -77,6 +77,14 @@ if __name__ == "__main__":
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--config", type=str, required=True)
     parser.add_argument("--local-rank", type=int, default=0)
+    parser.add_argument("--output_dir", type=str, default=None,
+                        help="Output dir for checkpoints + logs. Overrides the "
+                             "default runs/grpo/<config.name>/<timestamp> layout. The "
+                             "timestamp is NOT appended when set — pass a fully "
+                             "resolved path.")
+    parser.add_argument("--ckpt_path", type=str, default=None,
+                        help="Resume training from this Lightning checkpoint "
+                             "(passed to trainer.fit(ckpt_path=...)).")
 
     args = parser.parse_args()
     seed_everything(args.seed)
@@ -145,7 +153,15 @@ if __name__ == "__main__":
     )
 
     current_date = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    save_dir = f"runs/grpo/{current_date}"
+    # --output_dir wins (used verbatim, no timestamp appended). Otherwise a
+    # per-config subdir keeps multiple RFT runs (e.g. ablation arms) from
+    # interleaving timestamps in one flat dir, falling back to a plain
+    # timestamp when the config has no `name` field (legacy).
+    if args.output_dir:
+        save_dir = args.output_dir
+    else:
+        run_name = config.get('name')
+        save_dir = f"runs/grpo/{run_name}/{current_date}" if run_name else f"runs/grpo/{current_date}"
     
     trainer = Trainer(
         num_nodes=1,
@@ -184,7 +200,7 @@ if __name__ == "__main__":
             ),
             LearningRateMonitor(logging_interval="step")
         ],
-        logger=[CSVLogger(save_dir="runs/"), TensorBoardLogger(save_dir="runs/")],
+        logger=[CSVLogger(save_dir=f"{save_dir}"), TensorBoardLogger(save_dir=f"{save_dir}")],
         enable_model_summary=True,
         log_every_n_steps=1,
         gradient_clip_algorithm="value",
@@ -192,4 +208,4 @@ if __name__ == "__main__":
         limit_val_batches=0
     )
 
-    trainer.fit(model, train_dataloaders=train_data)
+    trainer.fit(model, train_dataloaders=train_data, ckpt_path=args.ckpt_path)

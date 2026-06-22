@@ -50,6 +50,9 @@ if __name__ == "__main__":
                              "default runs/sft/<config.name>/<timestamp> layout. The "
                              "timestamp is NOT appended when set — pass a fully "
                              "resolved path.")
+    parser.add_argument("--ckpt_path", type=str, default=None,
+                        help="Resume training from this Lightning checkpoint "
+                             "(passed to trainer.fit(ckpt_path=...)).")
     args = parser.parse_args()
     seed_everything(args.seed)
 
@@ -171,4 +174,5 @@ if __name__ == "__main__":
         # limit_val_batches=0.001
     )
     torch.cuda.empty_cache()
-    trainer.fit(model, train_dataloaders=train_data, val_dataloaders=val_data)
+    trainer.fit(model, train_dataloaders=train_data, val_dataloaders=val_data,
+                ckpt_path=args.ckpt_path)
