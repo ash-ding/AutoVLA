@@ -3,9 +3,22 @@ NuScenes Evaluation Script for AutoVLA.
 
 This script evaluates the AutoVLA model on NuScenes validation data,
 computing planning metrics such as L2 distance and collision rate.
+
+Supports both single-GPU and multi-GPU evaluation:
+
+  Single-GPU (README default):
+      python tools/eval/nusc_eval.py --config ... --checkpoint ... --seg_data_path ...
+
+  Multi-GPU (8x A100, ~8x speedup):
+      torchrun --nproc_per_node=8 tools/eval/nusc_eval.py --config ... --checkpoint ... --seg_data_path ...
+
+In multi-GPU mode each rank evaluates a disjoint shard of test samples; the
+PlanningMetric (torchmetrics) automatically all-reduces the accumulator state
+on compute(), so the final table on rank 0 is identical to a single-GPU run.
 """
 import argparse
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -17,6 +30,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "navsim"))
 
 import yaml
 import torch
+import torch.distributed as dist
 import numpy as np
 from tqdm import tqdm
 from prettytable import PrettyTable
@@ -57,41 +71,61 @@ def parse_args():
 
 def main():
     args = parse_args()
-    
+
+    # Distributed setup (when launched via torchrun)
+    local_rank = int(os.environ.get('LOCAL_RANK', 0))
+    world_size = int(os.environ.get('WORLD_SIZE', 1))
+    rank = int(os.environ.get('RANK', 0))
+    is_distributed = world_size > 1
+
+    if is_distributed:
+        dist.init_process_group(backend='nccl')
+        device = f'cuda:{local_rank}'
+        torch.cuda.set_device(local_rank)
+    else:
+        device = args.device
+
+    is_main = (rank == 0)
+
     # Load configuration
     config = load_config(args.config)
-    
+
     # Initialize processor
     processor = AutoProcessor.from_pretrained(config['model']['pretrained_model_path'], use_fast=True)
-    
+
     # Build data config for SFTDataset from config
-    
     train_dataset = SFTDataset(config['data']['val'], config['model'], processor)
 
     # Load model
     checkpoint_path = Path(args.checkpoint)
     model = SFTAutoVLA(config)
     model.autovla.vlm.resize_token_embeddings(len(processor.tokenizer))
-    
-    state_dict = torch.load(checkpoint_path, map_location=args.device)['state_dict']
+
+    state_dict = torch.load(checkpoint_path, map_location=device)['state_dict']
     model.autovla.load_state_dict(state_dict, strict=False)
 
-    model.to(args.device)
-    model.autovla.device = args.device  # Update the device attribute for predict()
+    model.to(device)
+    model.autovla.device = device  # Update the device attribute for predict()
     model.eval()
 
-    # Initialize planning metrics
-    planning_metrics = PlanningMetric(n_future=6)
-    
-    # Determine number of samples to evaluate
+    # Initialize planning metrics. PlanningMetric inherits torchmetrics.Metric;
+    # its add_state(..., dist_reduce_fx="sum") declares DDP-aware accumulators,
+    # so compute() will all-reduce across ranks transparently.
+    planning_metrics = PlanningMetric(n_future=6).to(device)
+
+    # Determine number of samples + shard across ranks (round-robin)
     sample_num = len(train_dataset.scenes)
     if args.num_samples is not None:
         sample_num = min(args.num_samples, sample_num)
-    
-    print(f"Evaluating {sample_num} samples...")
 
-    # Evaluate each sample
-    for idx in tqdm(range(sample_num), desc="Processing samples"):
+    rank_indices = list(range(rank, sample_num, world_size))
+    if is_main:
+        print(f"Evaluating {sample_num} samples on {world_size} GPU(s) "
+              f"(~{len(rank_indices)} per rank)...")
+
+    # Evaluate this rank's shard
+    iterator = tqdm(rank_indices, desc=f"rank{rank}", disable=not is_main)
+    for idx in iterator:
         # scenes is a list of tuples: (scene_path, sensor_data_path)
         scene_path, _ = train_dataset.scenes[idx]
         
@@ -162,8 +196,16 @@ def main():
         )
     
     # Calculate and print overall statistics
+    # compute() triggers torchmetrics' all-reduce across ranks for any state
+    # declared with dist_reduce_fx — must be called on every rank.
     eval_result = planning_metrics.compute()
-    
+
+    if not is_main:
+        if is_distributed:
+            dist.barrier()
+            dist.destroy_process_group()
+        return
+
     # Create table with STP3's definition (cumulative average)
     planning_tab_stp3 = PrettyTable()
     planning_tab_stp3.title = "STP3's Definition Planning Metrics (Cumulative Average)"
@@ -191,14 +233,18 @@ def main():
     # Save results to file
     with open(args.output, 'a') as f:
         f.write(f"\n{'='*60}\n")
-        f.write(f"Evaluation Results - {sample_num} samples\n")
+        f.write(f"Evaluation Results - {sample_num} samples ({world_size} GPU)\n")
         f.write(f"Config: {args.config}\n")
         f.write(f"Checkpoint: {args.checkpoint}\n")
         f.write(f"{'='*60}\n\n")
         f.write(str(planning_tab_stp3) + "\n\n")
         f.write(str(planning_tab_uniad) + "\n")
-    
+
     print(f"\nResults saved to {args.output}")
+
+    if is_distributed:
+        dist.barrier()
+        dist.destroy_process_group()
 
 
 if __name__ == '__main__':
