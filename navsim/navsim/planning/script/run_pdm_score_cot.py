@@ -82,6 +82,11 @@ def run_pdm_score(args: List[Dict[str, Union[List[str], DictConfig]]]) -> List[D
         sensor_config=agent.get_sensor_config(),
     )
 
+    # Per-token dump dir: resolved + pre-created in main(), passed via args
+    # (cfg.output_dir contains a Hydra interpolation that ray serialization
+    # would break — see issue with UnsupportedInterpolationType).
+    per_sample_dir = Path(args[0]["per_sample_dir"])
+
     tokens_to_evaluate = list(set(scene_loader.tokens) & set(metric_cache_loader.tokens))
     pdm_results: List[Dict[str, Any]] = []
     for idx, (token) in enumerate(tokens_to_evaluate):
@@ -128,6 +133,24 @@ def run_pdm_score(args: List[Dict[str, Union[List[str], DictConfig]]]) -> List[D
                 scorer=scorer,
             )
             score_row.update(asdict(pdm_result))
+
+            # Per-token dump: cot trace + predicted/gt trajectory + scores.
+            # Needed for cross-arm qualitative ablation; PDM-score CSV alone
+            # carries no reasoning text and no per-token trajectory.
+            try:
+                token_record = {
+                    "token": token,
+                    "cot_trace": cot_results if cot_results else "",
+                    "pred_trajectory": trajectory.poses.tolist(),
+                    "gt_trajectory": agent_input.get("gt_trajectory", None),
+                    "his_trajectory": agent_input.get("his_trajectory", None),
+                    "scores": asdict(pdm_result),
+                }
+                with open(per_sample_dir / f"{token}.json", "w", encoding="utf-8") as f:
+                    json.dump(token_record, f)
+            except Exception:
+                logger.warning(f"Failed to dump per-token record for {token}")
+                traceback.print_exc()
         except Exception as e:
             logger.warning(f"----------- Agent failed for token {token}:")
             traceback.print_exc()
@@ -165,11 +188,19 @@ def main(cfg: DictConfig) -> None:
     if num_unused_metric_cache_tokens > 0:
         logger.warning(f"Unused metric cache for {num_unused_metric_cache_tokens} tokens. Skipping these tokens.")
     logger.info("Starting pdm scoring of %s scenarios...", str(len(tokens_to_evaluate)))
+
+    # Resolve cfg.output_dir here (main has the Hydra resolver). Pre-create the
+    # per_sample dump dir and ship the resolved string path through to workers.
+    resolved_output_dir = str(cfg.output_dir)
+    per_sample_dir = Path(resolved_output_dir) / "per_sample"
+    per_sample_dir.mkdir(parents=True, exist_ok=True)
+
     data_points = [
         {
             "cfg": cfg,
             "log_file": log_file,
             "tokens": tokens_list,
+            "per_sample_dir": str(per_sample_dir),
         }
         for log_file, tokens_list in scene_loader.get_tokens_list_per_log().items()
     ]

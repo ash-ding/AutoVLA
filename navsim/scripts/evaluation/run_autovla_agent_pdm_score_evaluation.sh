@@ -80,17 +80,21 @@ echo "  NUM_EVAL_WORKERS:      $NUM_EVAL_WORKERS"
 echo "  GPUS_PER_EVAL_WORKER:  $GPUS_PER_EVAL_WORKER"
 echo "==================================================="
 
+# NOTE: Hydra override grammar treats `=` as the key-value separator. PyTorch
+# Lightning ModelCheckpoint filenames are `epoch=N-loss=X.XXXX.ckpt` -- which
+# would be parsed as multiple overrides. Wrap path values in single quotes so
+# Hydra reads the entire string as a literal.
 python "$NAVSIM_DEVKIT_ROOT/navsim/planning/script/run_pdm_score_cot.py" \
-  train_test_split=$TRAIN_TEST_SPLIT \
+  "train_test_split=$TRAIN_TEST_SPLIT" \
   agent=autovla_agent \
-  +agent.config_path="$CONFIG_PATH" \
-  +agent.checkpoint_path="$CHECKPOINT" \
-  +agent.sensor_data_path="$SENSOR_DATA_PATH" \
-  +agent.lora_conf.use_lora=$LORA \
-  metric_cache_path="$CACHE_PATH" \
-  json_data_path="$JSON_DATA_PATH" \
-  experiment_name="$EXPERIMENT_NAME" \
-  worker="$WORKER_TYPE" \
-  num_eval_workers=$NUM_EVAL_WORKERS \
-  +gpus_per_eval_worker=$GPUS_PER_EVAL_WORKER \
+  "+agent.config_path='$CONFIG_PATH'" \
+  "+agent.checkpoint_path='$CHECKPOINT'" \
+  "+agent.sensor_data_path='$SENSOR_DATA_PATH'" \
+  "+agent.lora_conf.use_lora=$LORA" \
+  "metric_cache_path='$CACHE_PATH'" \
+  "json_data_path='$JSON_DATA_PATH'" \
+  "experiment_name=$EXPERIMENT_NAME" \
+  "worker=$WORKER_TYPE" \
+  "+num_eval_workers=$NUM_EVAL_WORKERS" \
+  "+gpus_per_eval_worker=$GPUS_PER_EVAL_WORKER" \
   $EXTRA_ARGS
