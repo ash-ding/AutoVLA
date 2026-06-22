@@ -238,7 +238,26 @@ class SFTDataset(Dataset):
                     ]
             elif scene_data['dataset_name'] == "nuscenes":
                 has_cot = False
-                if len(gt_cot) == 5:  # If CoT is available
+                # Symbolic CoT path: cot_output is a single string (PERCEPTION/
+                # FACTS/RULES/ACTION block), not the 5-field NL list. Mirror the
+                # nuplan branch handling above.
+                if scene_data.get('cot_format') == 'symbolic' and isinstance(gt_cot, str) and gt_cot.strip():
+                    assistant_content = [
+                        {
+                            "type": "text",
+                            "text": (
+                                "<think>\n"
+                                "This is a complex scenario requiring additional reasoning.\n"
+                                f"{gt_cot}\n"
+                                "</think>\n"
+                                "<answer>\n"
+                                "The final output action is: " + self.action_tokenizer(gt_action_idx[0]) + "\n"
+                                "</answer>"
+                            )
+                        }
+                    ]
+                    has_cot = True
+                elif isinstance(gt_cot, list) and len(gt_cot) == 5:  # Legacy 5-field NL CoT
                     if gt_cot[4] == "STOP\n":
                         gt_cot[4] = "stop"
                     assistant_content = [
@@ -246,11 +265,11 @@ class SFTDataset(Dataset):
                             "type": "text",
                             "text":
                                 "<think>\n"
-                                "This is a complex scenario requiring additional reasoning.\n" 
-                                f"### Scene Description:\n{gt_cot[0]}\n\n" 
-                                f"### Critical Object Description:\n{gt_cot[1] + gt_cot[2]}\n\n" 
+                                "This is a complex scenario requiring additional reasoning.\n"
+                                f"### Scene Description:\n{gt_cot[0]}\n\n"
+                                f"### Critical Object Description:\n{gt_cot[1] + gt_cot[2]}\n\n"
                                 f"### Reasoning on Intent:\n{gt_cot[3]}\n\n"
-                                f"### Best Driving Action:\n{gt_cot[4]}\n" 
+                                f"### Best Driving Action:\n{gt_cot[4]}\n"
                                 "</think>\n"
                                 "<answer>\n"
                                 "The final output action is: " + self.action_tokenizer(gt_action_idx[0]) + "\n"

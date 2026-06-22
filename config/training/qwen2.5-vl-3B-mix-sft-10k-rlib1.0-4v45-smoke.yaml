@@ -1,0 +1,59 @@
+name: qwen2.5-vl-3B-mix-sft-10k-rlib1.0-4v45-smoke
+description: Smoke test for Arm C (4v45). Only epochs and train_sample_size differ from main YAML.
+
+model:
+  use_cot: true
+  pretrained_model_path: model_weights/Qwen2.5-VL-3B-Instruct
+  train_vision_backbone: false
+  train_lm_backbone: true
+  codebook_cache_path: codebook_cache/agent_vocab.pkl
+  trajectory:
+    num_poses: 10
+    interval_length: 0.5
+    time_horizon: 5.0
+  tokens:
+    action_start_id: 151665
+    ignore_index: -100
+    assistant_id: [151644, 77091]
+  video:
+    min_pixels: 109760
+    max_pixels: 109760
+  nuplan_side_field: front_left
+
+training:
+  batch_size: 1
+  learning_rate: 5.7e-5
+  epochs: 1
+  num_workers: 8
+  weight_decay: 0.01
+  lr_warmup_step: 100
+  lr_step_frequency: 250
+  lr_step_gamma: 0.98
+  train_sample_size: 64
+  accumulate_grad_batches: 4
+
+data:
+  train:
+    json_dataset_path:
+      - /data/nuplan_nuscenes_train_mix_10k/nuPlan/action_only_samples_6512
+      - /data/nuplan_nuscenes_train_mix_10k/nuPlan/symbolic_reasoning_samples_rlib1.0_qwen72b_4v45_2461
+      - /data/nuplan_nuscenes_train_mix_10k/nuScenes/action_only_samples_871
+      - /data/nuplan_nuscenes_train_mix_10k/nuScenes/symbolic_reasoning_samples_rlib1.0_qwen72b_4v_156
+    sensor_data_path:
+      - /data/nuPlan/sensor_blobs/trainval
+      - /data/nuPlan/sensor_blobs/trainval
+      - /data/nuScenes
+      - /data/nuScenes
+
+  val:
+    json_dataset_path: /data/nuscenes_test/test_samples_5569
+    sensor_data_path: /data/nuScenes
+
+inference:
+  batch_size: 1
+  num_workers: 2
+  sample:
+    max_length: 2048
+    temperature: 0.8
+    top_k: 20
+    top_p: 0.2

@@ -1,0 +1,32 @@
+name: qwen2.5-vl-72B-nuplan-symbolic-3v90
+description: |
+  Symbolic CoT preprocessing on nuPlan trainval, 3-view teacher (front +
+  front-left + front-right, NO back) with 90° side cameras (CAM_L1 / CAM_R1).
+  Teacher: Qwen2.5-VL-72B-AWQ via vLLM. Used by ablation Arm B (no-back).
+
+# Annotation backend
+annotation_backend: vllm
+pretrained_model_path: /backup/autovla_models/Qwen2.5-VL-72B-Instruct-AWQ
+tensor_parallel_size: 1
+batch_size: 32
+max_num_seqs: 32
+max_model_len: 16384
+prefetch_factor: 4
+num_workers: 2
+
+# Sampling
+temperature: 0
+seed: 42
+
+# Symbolic CoT
+rlib_dir: ./symdrive/rlib1_0/rlib
+cot_style: rlib1.0
+
+# Teacher camera setup — 3 view, 90° side cameras (drop back)
+include_back_view: false
+side_cam_yaw: 90
+
+# Dataset
+dataset_name: nuplan
+dataset_path: /data/nuPlan/placeholder/trainval
+scene_filter: /root/code/AutoVLA/navsim/navsim/planning/script/config/common/train_test_split/scene_filter/all_scenes.yaml

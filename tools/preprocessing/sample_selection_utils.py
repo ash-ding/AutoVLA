@@ -82,11 +82,16 @@ def get_dataset_tokens(dataset) -> List[str]:
     if hasattr(dataset, "_scene_loader") and hasattr(dataset._scene_loader, "tokens"):
         return list(dataset._scene_loader.tokens)
 
+    # NuscenesCoTAnnotationDataset exposes tokens as self.sample_tokens.
+    if hasattr(dataset, "sample_tokens"):
+        return list(dataset.sample_tokens)
+
     if hasattr(dataset, "scenes"):
         return [scene[0] for scene in dataset.scenes]
 
     raise AttributeError(
-        "Dataset does not expose tokens via '_scene_loader.tokens' or 'scenes'."
+        "Dataset does not expose tokens via '_scene_loader.tokens', "
+        "'sample_tokens', or 'scenes'."
     )
 
 
