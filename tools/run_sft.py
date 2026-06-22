@@ -109,7 +109,11 @@ if __name__ == "__main__":
     )
 
     current_date = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    save_dir = f"runs/sft/{current_date}"
+    # Per-config subdir keeps multiple SFT runs (e.g. ablation arms) from
+    # interleaving timestamps in one flat dir. Falls back to plain timestamp
+    # when the config has no `name` field (legacy).
+    run_name = config.get('name')
+    save_dir = f"runs/sft/{run_name}/{current_date}" if run_name else f"runs/sft/{current_date}"
     
     trainer = pl.Trainer(
         num_nodes=1,
