@@ -24,10 +24,11 @@ class RFTDataset(Dataset):
         trajectory_sampling = TrajectorySampling(time_horizon=time_horizon, 
                                                 interval_length=interval_length)
 
-        self._agent = AutoVLAAgent(trajectory_sampling=trajectory_sampling, 
+        self._agent = AutoVLAAgent(trajectory_sampling=trajectory_sampling,
                                     sensor_data_path=self.sensor_data_path,
                                     codebook_cache_path=model_config['codebook_cache_path'],
-                                    skip_model_load=True)
+                                    skip_model_load=True,
+                                    nuplan_side_field=model_config.get('nuplan_side_field', 'left'))
         
         # Get all JSON files from all data paths
         self.scenes = []

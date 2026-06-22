@@ -36,10 +36,15 @@ sys.path.insert(0, str(Path(__file__).parent))
 from load_nuplan_nuscenes_mix_train import (  # noqa: E402
     open_streaming_tar,
     stream_extract_filtered,
-    NUSC_SKIP_PREFIXES,
+    nusc_skip_prefixes,
+    NUPLAN_CAMERA_TO_FIELD,
+    NUSC_CAMERA_TO_FIELD,
     used_fields,
     sync_drivelm,
 )
+
+# Module-level skip set; recomputed in main() after argparse.
+NUSC_SKIP_PREFIXES = nusc_skip_prefixes(["front", "front_left", "front_right"])
 
 
 BACKUP_NUPLAN_JSON = Path("/backup/nuplan_test")
@@ -99,7 +104,7 @@ def extract_test_json_tarball(tarball: Path, target_root: Path):
     return target_root / next(iter(top_levels)), n
 
 
-def collect_nuplan_paths(samples_dir: Path, num_cameras: int = 3):
+def collect_nuplan_paths(samples_dir: Path, nuplan_cameras):
     """Walk extracted test JSONs and build the set of needed jpg/pkl paths.
 
     JSONs from the upstream pipeline use the legacy
@@ -108,7 +113,7 @@ def collect_nuplan_paths(samples_dir: Path, num_cameras: int = 3):
     set matches the destinations used by extract_nuplan_raw() below. Idempotent
     for JSONs that already use the new layout."""
     jpgs, scenes = set(), set()
-    fields = used_fields("nuplan", num_cameras)
+    fields = used_fields("nuplan", cameras=nuplan_cameras)
     for fp in samples_dir.rglob("*.json"):
         d = json.loads(fp.read_text())
         for field in fields:
@@ -128,9 +133,9 @@ def collect_nuplan_paths(samples_dir: Path, num_cameras: int = 3):
     return jpgs, pkls, scenes
 
 
-def collect_nuscenes_paths(samples_dir: Path, num_cameras: int = 3):
+def collect_nuscenes_paths(samples_dir: Path, nuscenes_cameras):
     jpgs = set()
-    fields = used_fields("nuscenes", num_cameras)
+    fields = used_fields("nuscenes", cameras=nuscenes_cameras)
     for fp in samples_dir.rglob("*.json"):
         d = json.loads(fp.read_text())
         for field in fields:
@@ -246,7 +251,7 @@ def extract_nuscenes_raw(jpgs: set, parallelism: int):
           f"elapsed={perf_counter()-t0:.1f}s")
 
 
-def process_nuplan(parallelism: int, force: bool, skip_raw: bool, num_cameras: int = 3) -> int:
+def process_nuplan(parallelism: int, force: bool, skip_raw: bool, nuplan_cameras) -> int:
     print(f"\n========== nuPlan test ==========")
     if force and NUPLAN_TEST_WORKSPACE.exists():
         print(f"--force: removing {NUPLAN_TEST_WORKSPACE}")
@@ -263,9 +268,9 @@ def process_nuplan(parallelism: int, force: bool, skip_raw: bool, num_cameras: i
         print("\n--skip-raw set; nuPlan done.")
         return 0
 
-    print(f"\n=== Phase 2: compute needed raw paths (num_cameras={num_cameras}) ===")
+    print(f"\n=== Phase 2: compute needed raw paths (cameras={nuplan_cameras}) ===")
     t2 = perf_counter()
-    jpgs, pkls, scenes = collect_nuplan_paths(samples_dir, num_cameras)
+    jpgs, pkls, scenes = collect_nuplan_paths(samples_dir, nuplan_cameras)
     print(f"  {len(jpgs)} jpgs, {len(scenes)} scenes ({len(pkls)} pkls)")
     print(f"  Phase 2 elapsed: {perf_counter()-t2:.1f}s")
 
@@ -285,7 +290,7 @@ def process_nuplan(parallelism: int, force: bool, skip_raw: bool, num_cameras: i
     return 0
 
 
-def process_nuscenes(parallelism: int, force: bool, skip_raw: bool, num_cameras: int = 3) -> int:
+def process_nuscenes(parallelism: int, force: bool, skip_raw: bool, nuscenes_cameras) -> int:
     print(f"\n========== nuScenes test ==========")
     if force and NUSC_TEST_WORKSPACE.exists():
         print(f"--force: removing {NUSC_TEST_WORKSPACE}")
@@ -302,9 +307,9 @@ def process_nuscenes(parallelism: int, force: bool, skip_raw: bool, num_cameras:
         print("\n--skip-raw set; nuScenes done.")
         return 0
 
-    print(f"\n=== Phase 2: compute needed raw paths (num_cameras={num_cameras}) ===")
+    print(f"\n=== Phase 2: compute needed raw paths (cameras={nuscenes_cameras}) ===")
     t2 = perf_counter()
-    jpgs = collect_nuscenes_paths(samples_dir, num_cameras)
+    jpgs = collect_nuscenes_paths(samples_dir, nuscenes_cameras)
     print(f"  {len(jpgs)} jpgs")
     print(f"  Phase 2 elapsed: {perf_counter()-t2:.1f}s")
 
@@ -333,17 +338,55 @@ def main():
                    help="rm -rf the test workspace before starting.")
     p.add_argument("--skip-raw", action="store_true",
                    help="Skip raw-data extraction (only build the JSON workspace).")
-    p.add_argument("--num-cameras", type=int, choices=(3, 4), default=3,
-                   help="Per-dataset camera count. 3 = SFT/RL training set "
-                        "(nuPlan F0+L1+R1, nuScenes front+front_left+front_right). "
-                        "4 = adds back camera, matches CoT-annotation prompt set.")
+    p.add_argument("--num-cameras", type=int, choices=(3, 4), default=None,
+                   help="Backwards-compat alias for --nuplan-cameras / --nuscenes-cameras. "
+                        "3 = legacy SFT/RL training set; 4 = adds back camera.")
+    p.add_argument("--nuplan-cameras", type=str, default=None,
+                   help=f"Comma-separated nuPlan cameras. Valid: "
+                        f"{','.join(NUPLAN_CAMERA_TO_FIELD.keys())}.")
+    p.add_argument("--nuscenes-cameras", type=str, default=None,
+                   help=f"Comma-separated nuScenes cameras. Valid: "
+                        f"{','.join(NUSC_CAMERA_TO_FIELD.keys())}.")
     args = p.parse_args()
+
+    # Resolve camera selection
+    def _parse_list(spec, valid, label):
+        items = [s.strip() for s in spec.split(",") if s.strip()]
+        bad = [s for s in items if s not in valid]
+        if bad:
+            p.error(f"Unknown {label} camera(s): {bad}; valid: {sorted(valid)}")
+        return items
+
+    if args.nuplan_cameras is not None or args.nuscenes_cameras is not None:
+        if args.num_cameras is not None:
+            p.error("--num-cameras is mutually exclusive with --nuplan-cameras / --nuscenes-cameras")
+        nuplan_cameras = _parse_list(
+            args.nuplan_cameras or "F0,L1,R1", NUPLAN_CAMERA_TO_FIELD, "nuplan"
+        )
+        nuscenes_cameras = _parse_list(
+            args.nuscenes_cameras or "front,front_left,front_right", NUSC_CAMERA_TO_FIELD, "nuscenes"
+        )
+    else:
+        legacy_n = args.num_cameras if args.num_cameras is not None else 3
+        if legacy_n == 3:
+            nuplan_cameras = ["F0", "L1", "R1"]
+            nuscenes_cameras = ["front", "front_left", "front_right"]
+        else:
+            nuplan_cameras = ["F0", "L1", "R1", "B0"]
+            nuscenes_cameras = ["front", "front_left", "front_right", "back"]
+
+    print(f"  nuplan cameras:   {nuplan_cameras}")
+    print(f"  nuscenes cameras: {nuscenes_cameras}")
+
+    # Rebind module-level skip set so extract_nuscenes_raw() sees the right filter.
+    global NUSC_SKIP_PREFIXES
+    NUSC_SKIP_PREFIXES = nusc_skip_prefixes(nuscenes_cameras)
 
     rc = 0
     if args.dataset in ("nuplan", "both"):
-        rc |= process_nuplan(args.parallelism, args.force, args.skip_raw, args.num_cameras)
+        rc |= process_nuplan(args.parallelism, args.force, args.skip_raw, nuplan_cameras)
     if args.dataset in ("nuscenes", "both"):
-        rc |= process_nuscenes(args.parallelism, args.force, args.skip_raw, args.num_cameras)
+        rc |= process_nuscenes(args.parallelism, args.force, args.skip_raw, nuscenes_cameras)
         # drivelm travels with nuScenes (JSON-only; sync even under --skip-raw)
         print(f"\n========== drivelm sync ==========")
         sync_drivelm()

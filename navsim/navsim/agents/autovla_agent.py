@@ -229,9 +229,21 @@ class TokenProcessor(torch.nn.Module):
 class AutoVLAAgentFeatureBuilder(AbstractFeatureBuilder):
     """Input feature builder of AutoVLA Agent."""
 
-    def __init__(self, sensor_data_path: Optional[str] = None):
-        """Initializes the feature builder."""
+    def __init__(self, sensor_data_path: Optional[str] = None, nuplan_side_field: str = 'left'):
+        """Initializes the feature builder.
+
+        :param sensor_data_path: prefix for resolving relative camera paths.
+        :param nuplan_side_field: which JSON field provides the front-left /
+            front-right cameras for nuPlan samples. 'left' → CAM_L1 / CAM_R1
+            (90° pure side, current default). 'front_left' → CAM_L0 / CAM_R0
+            (45° forward-canted). nuScenes always reads from
+            front_left_camera_paths / front_right_camera_paths.
+        """
+        assert nuplan_side_field in ('left', 'front_left'), (
+            f"nuplan_side_field must be 'left' or 'front_left', got {nuplan_side_field!r}"
+        )
         self.sensor_data_path = sensor_data_path
+        self.nuplan_side_field = nuplan_side_field
 
     def get_unique_name(self) -> str:
         """Inherited, see superclass."""
@@ -251,11 +263,18 @@ class AutoVLAAgentFeatureBuilder(AbstractFeatureBuilder):
         back_left_camera = scene_data.get('back_left_camera_paths')
         back_right_camera = scene_data.get('back_right_camera_paths')
         
-        # Normalize camera names across datasets
-        # NuPlan uses left/right_camera, others use front_left/right_camera
+        # Normalize camera names across datasets.
+        # For nuPlan, nuplan_side_field controls the physical source:
+        #   'left' (default) → CAM_L1/CAM_R1 (90° pure side)
+        #   'front_left'     → CAM_L0/CAM_R0 (45° forward-canted)
+        # For nuScenes the physical sensor layout is fixed.
         if dataset_name == 'nuplan':
-            front_left_cam = scene_data.get('left_camera_paths')
-            front_right_cam = scene_data.get('right_camera_paths')
+            if self.nuplan_side_field == 'left':
+                front_left_cam = scene_data.get('left_camera_paths')
+                front_right_cam = scene_data.get('right_camera_paths')
+            else:  # 'front_left'
+                front_left_cam = scene_data.get('front_left_camera_paths')
+                front_right_cam = scene_data.get('front_right_camera_paths')
         else:
             front_left_cam = scene_data.get('front_left_camera_paths')
             front_right_cam = scene_data.get('front_right_camera_paths')
@@ -367,7 +386,8 @@ class AutoVLAAgent(AbstractAgent):
         lora_conf: Optional[str] = None,
         config_path: Optional[str] = None,
         device: str = 'cuda',  # Default to CUDA if available
-        skip_model_load: bool = False
+        skip_model_load: bool = False,
+        nuplan_side_field: str = 'left',
     ):
         """
         Initializes the agent interface for AutoVLA.
@@ -379,10 +399,13 @@ class AutoVLAAgent(AbstractAgent):
         :param config_path: optional config path as string, defaults to None
         :param device: device to use, defaults to 'cuda'
         :param skip_model_load: whether to skip model loading, defaults to False
+        :param nuplan_side_field: which nuPlan JSON field provides front-left /
+            front-right cameras. 'left' → CAM_L1/R1 (90° side); 'front_left' →
+            CAM_L0/R0 (45° forward-canted). See AutoVLAAgentFeatureBuilder.
         """
         super().__init__()
         self._trajectory_sampling = trajectory_sampling
-        
+
         config = None
         if config_path:
             with open(config_path, 'r') as f:
@@ -398,9 +421,10 @@ class AutoVLAAgent(AbstractAgent):
         if not skip_model_load:
             self.autovla = AutoVLA(config, device=device)
             self.autovla.eval()
-        
+
         self.sensor_data_path = sensor_data_path
         self.lora_conf = lora_conf
+        self.nuplan_side_field = nuplan_side_field
 
 
     def initialize(self) -> None:
@@ -446,7 +470,10 @@ class AutoVLAAgent(AbstractAgent):
 
     def get_feature_builders(self) -> List[AbstractFeatureBuilder]:
         """Inherited, see superclass."""
-        return [AutoVLAAgentFeatureBuilder(sensor_data_path=self.sensor_data_path)]
+        return [AutoVLAAgentFeatureBuilder(
+            sensor_data_path=self.sensor_data_path,
+            nuplan_side_field=self.nuplan_side_field,
+        )]
     
     def compute_trajectory(self, scene_data) -> Trajectory:
         """

@@ -50,7 +50,8 @@ class SFTDataset(Dataset):
         nuplan_agent = AutoVLAAgent(trajectory_sampling=trajectory_sampling,
                                     sensor_data_path=self.sensor_data_paths[0],
                                    codebook_cache_path=model_config['codebook_cache_path'],
-                                   skip_model_load=True)
+                                   skip_model_load=True,
+                                   nuplan_side_field=model_config.get('nuplan_side_field', 'left'))
 
         self._agent = nuplan_agent
         
@@ -280,7 +281,7 @@ class SFTDataset(Dataset):
             {
                 "type": "text",
                 "text": (
-                    "The autonomous vehicle is equipped with three cameras mounted at the front, left, and right, enabling a comprehensive perception of the surrounding environment."
+                    "The autonomous vehicle is equipped with three cameras mounted at the front, front-left, and front-right, enabling a comprehensive perception of the surrounding environment."
                 )
             },
             {

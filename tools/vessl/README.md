@@ -83,18 +83,45 @@ mix. Whenever nuScenes is selected, `/backup/drivelm/` is also synced to
 
 ---
 
-## Camera pruning ("level 3")
+## Camera selection
 
-Only the 3 cameras `SFTDataset` / `AutoVLAAgent` actually consume are extracted:
+Both scripts let you specify exactly which cameras to extract via
+`--nuplan-cameras` and `--nuscenes-cameras` (comma-separated short names).
+Choosing fewer cameras shrinks the extracted footprint proportionally.
 
-| Dataset | JSON fields | nuPlan dir / nuScenes dir |
+**Supported camera short names**
+
+| Dataset | Short name | JSON field | Physical sensor |
+|---|---|---|---|
+| nuPlan   | `F0` | `front_camera_paths`        | `CAM_F0` (front, 0°) |
+| nuPlan   | `L0` | `front_left_camera_paths`   | `CAM_L0` (front-left, ~45°) |
+| nuPlan   | `R0` | `front_right_camera_paths`  | `CAM_R0` (front-right, ~45°) |
+| nuPlan   | `L1` | `left_camera_paths`         | `CAM_L1` (side-left, 90°) |
+| nuPlan   | `R1` | `right_camera_paths`        | `CAM_R1` (side-right, 90°) |
+| nuPlan   | `B0` | `back_camera_paths`         | `CAM_B0` (back, 180°) |
+| nuScenes | `front`       | `front_camera_paths`        | `CAM_FRONT` |
+| nuScenes | `front_left`  | `front_left_camera_paths`   | `CAM_FRONT_LEFT` |
+| nuScenes | `front_right` | `front_right_camera_paths`  | `CAM_FRONT_RIGHT` |
+| nuScenes | `back`        | `back_camera_paths`         | `CAM_BACK` |
+
+**Common bundles**
+
+| Use case | `--nuplan-cameras` | `--nuscenes-cameras` |
 |---|---|---|
-| nuPlan   | `front_camera_paths`, `left_camera_paths`, `right_camera_paths` | `CAM_F0`, `CAM_L1`, `CAM_R1` |
-| nuScenes | `front_camera_paths`, `front_left_camera_paths`, `front_right_camera_paths` | `CAM_FRONT`, `CAM_FRONT_LEFT`, `CAM_FRONT_RIGHT` |
+| Student SFT default (90° student) | `F0,L1,R1` | `front,front_left,front_right` |
+| 45° student SFT | `F0,L0,R0` | `front,front_left,front_right` |
+| 4-view teacher (90°)  | `F0,L1,R1,B0` | `front,front_left,front_right,back` |
+| 4-view teacher (45°)  | `F0,L0,R0,B0` | `front,front_left,front_right,back` |
+| 3-view teacher (no back) | (3-cam bundle above) | (3-cam bundle above) |
 
-`--num-cameras 4` adds the back camera (`CAM_B0` / `CAM_BACK`), matching
-the CoT-annotation prompt set. Other cameras (lidar, radar, sweeps) are
-always skipped to save disk and bandwidth.
+**Backwards compat**: the legacy `--num-cameras {3,4}` flag still works
+and maps to:
+- `3` → `--nuplan-cameras F0,L1,R1 --nuscenes-cameras front,front_left,front_right`
+- `4` → adds `B0` / `back`
+
+It is mutually exclusive with the new flags. LIDAR / RADAR / sweeps and
+the `CAM_BACK_LEFT` / `CAM_BACK_RIGHT` cameras for nuScenes are always
+skipped (not used by any prompt path).
 
 ---
 
@@ -110,7 +137,9 @@ Extract one of the 4 scaling bundles into `/data/nuplan_nuscenes_train_mix_<scal
 | `--model <name>` | yes | — | Substring matching the nuPlan CoT tarball name (e.g. `Qwen2.4_VL_72B_Instruct_AWQ`). |
 | `--datasets {nuplan,nuscenes,both}` | no | `both` | Restrict hydration to a single side of the mix. `nuscenes` (or `both`) also syncs `/backup/drivelm/` → `/data/drivelm/`. |
 | `--parallelism N` | no | 8 | Concurrent tarball streams. 8 is optimal — diminishing returns past that. |
-| `--num-cameras {3,4}` | no | 3 | 3 = training set; 4 = adds back camera, matches CoT-annotation prompt set. |
+| `--nuplan-cameras <list>` | no | derived | Comma list of nuPlan camera short names (see "Camera selection"). |
+| `--nuscenes-cameras <list>` | no | derived | Comma list of nuScenes camera short names. |
+| `--num-cameras {3,4}` | no | — | Legacy alias. Mutually exclusive with the two flags above. |
 | `--force` | no | false | `rm -rf` the per-scale `/data/nuplan_nuscenes_train_mix_<scale>/` before starting. |
 | `--skip-raw` | no | false | Only extract the sample-JSON tarballs (Phase 1) and sync drivelm if nuScenes is selected. Skip raw image / pkl extraction (Phase 2-4). Useful when `/data/nuPlan` and `/data/nuScenes` are already hydrated by an earlier scale. |
 
@@ -199,7 +228,9 @@ into `/data/{nuplan,nuscenes}_test/`.
 |---|---|---|---|
 | `--dataset {nuplan,nuscenes,both}` | yes | — | Which test set to hydrate. `both` does nuPlan first, then nuScenes. `nuscenes` (or `both`) also syncs `/backup/drivelm/` → `/data/drivelm/`. |
 | `--parallelism N` | no | 8 | Concurrent tarball streams. |
-| `--num-cameras {3,4}` | no | 3 | Per-dataset camera count. |
+| `--nuplan-cameras <list>` | no | `F0,L1,R1` | Comma list of nuPlan camera short names. |
+| `--nuscenes-cameras <list>` | no | `front,front_left,front_right` | Comma list of nuScenes camera short names. |
+| `--num-cameras {3,4}` | no | — | Legacy alias. Mutually exclusive with the two flags above. |
 | `--force` | no | false | `rm -rf` the per-dataset test workspace before starting. |
 | `--skip-raw` | no | false | Only extract the JSON tarball (Phase 1). Skip pkl/jpg extraction. DriveLM sync still runs if nuScenes is selected. |
 

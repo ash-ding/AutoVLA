@@ -644,7 +644,7 @@ class AutoVLA(torch.nn.Module):
             {
                 "type": "text",
                 "text": (
-                    "The autonomous vehicle is equipped with three cameras mounted at the front, left, and right, enabling a comprehensive perception of the surrounding environment."
+                    "The autonomous vehicle is equipped with three cameras mounted at the front, front-left, and front-right, enabling a comprehensive perception of the surrounding environment."
                 )
             },
             {

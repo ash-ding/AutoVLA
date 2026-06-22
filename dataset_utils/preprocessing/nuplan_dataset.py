@@ -46,13 +46,20 @@ class NuplanCoTAnnotationDataset(Dataset):
         else:
             self.needs_vision = bool(build_messages)
 
-        # Teacher camera-view count: 4 (front+back+left+right, default — matches
-        # the original training recipe) vs 3 (no back, matches the 3-camera
-        # student inference path in AutoVLAAgent.compute_features()).
-        # Set `include_back_view: false` in the dataset config to align teacher
-        # and student. Affects both NL CoT and symbolic CoT generation since
-        # both share this dataset class.
+        # Teacher camera-view count: 4 (front+back+front-left+front-right,
+        # default) vs 3 (no back). Set `include_back_view: false` in the
+        # dataset config to drop the back-view block.
         self.include_back_view = bool(config.get('include_back_view', True))
+
+        # Front-left / front-right side camera angle. 90 (default) loads from
+        # cam_l1/cam_r1 (90° pure side via images['left_camera']/['right_camera']);
+        # 45 loads from cam_l0/cam_r0 (45° forward-canted via
+        # images['front_left_camera']/['front_right_camera']). The prompt text
+        # is identical either way — the physical source is the only variable.
+        self.side_cam_yaw = int(config.get('side_cam_yaw', 90))
+        assert self.side_cam_yaw in (45, 90), (
+            f"side_cam_yaw must be 45 or 90, got {self.side_cam_yaw}"
+        )
 
         if config['scene_filter'] is None:
             scene_filter = SceneFilter(
@@ -67,8 +74,30 @@ class NuplanCoTAnnotationDataset(Dataset):
         trajectory_sampling = TrajectorySampling(time_horizon=5, interval_length=self.interval_length)
         self._agent = VlaAgent(trajectory_sampling=trajectory_sampling)
 
+        # Build a NARROW SensorConfig: enable only the cameras actually used
+        # by the teacher prompt, AND only at history-frame iterations. The
+        # `Union[bool, List[int]]` form lets a sensor opt out of future frames.
+        # Rationale:
+        #   1. nuPlan trainval workspace only carries F0+L1+R1+B0 (no L0/R0/L2/R2
+        #      in Stage 1). All-True would make SceneLoader load missing jpgs.
+        #   2. Even for the cameras we DO have, navsim hydrates frames at
+        #      history+future indices (default 4+10=14 per camera). vessl
+        #      hydrate only extracted the 4 history-frame paths per token, so
+        #      requesting future-frame jpgs → FileNotFoundError.
+        # Gating sensors at history-frame iterations only sidesteps both.
+        history_idx = list(range(scene_filter.num_history_frames))   # e.g. [0,1,2,3]
+        cam_side_90 = (self.side_cam_yaw == 90)
+        cam_side_45 = (self.side_cam_yaw == 45)
         sensor_config = replace(
             self._agent.get_sensor_config(),
+            cam_f0=history_idx,                                          # always (front)
+            cam_b0=history_idx if self.include_back_view else False,     # back (gated)
+            cam_l1=history_idx if cam_side_90 else False,                # side-left @ 90°
+            cam_r1=history_idx if cam_side_90 else False,                # side-right @ 90°
+            cam_l0=history_idx if cam_side_45 else False,                # front-left @ 45°
+            cam_r0=history_idx if cam_side_45 else False,                # front-right @ 45°
+            cam_l2=False,                                                # back-left (never used)
+            cam_r2=False,                                                # back-right (never used)
             decode_images=self.needs_vision,
         )
 
@@ -148,34 +177,35 @@ class NuplanCoTAnnotationDataset(Dataset):
                 back_camera_3 = images['back_camera'][2].image
                 back_camera_4 = images['back_camera'][3].image
 
-            left_camera_1 = images['left_camera'][0].image
-            left_camera_2 = images['left_camera'][1].image
-            left_camera_3 = images['left_camera'][2].image
-            left_camera_4 = images['left_camera'][3].image
+            # Front-left / front-right physical source dispatched by side_cam_yaw.
+            # Prompt labels stay "front-left" / "front-right" regardless of source.
+            if self.side_cam_yaw == 90:
+                fl_key, fr_key = 'left_camera', 'right_camera'         # CAM_L1, CAM_R1
+            else:  # 45
+                fl_key, fr_key = 'front_left_camera', 'front_right_camera'  # CAM_L0, CAM_R0
+            front_left_camera_1 = images[fl_key][0].image
+            front_left_camera_2 = images[fl_key][1].image
+            front_left_camera_3 = images[fl_key][2].image
+            front_left_camera_4 = images[fl_key][3].image
 
-            right_camera_1 = images['right_camera'][0].image
-            right_camera_2 = images['right_camera'][1].image
-            right_camera_3 = images['right_camera'][2].image
-            right_camera_4 = images['right_camera'][3].image
+            front_right_camera_1 = images[fr_key][0].image
+            front_right_camera_2 = images[fr_key][1].image
+            front_right_camera_3 = images[fr_key][2].image
+            front_right_camera_4 = images[fr_key][3].image
 
-            # Summary sentence — kept byte-identical to the original recipe
-            # when include_back_view=True so existing CoT generation runs are
-            # reproducible. The 3-view variant rewrites it to match what the
-            # model actually sees. NOTE: the original 4-view sentence says
-            # "front left, front right, and back" but the per-video labels
-            # below are actually "back, left, right" — pre-existing wording
-            # bug preserved here intentionally; do not "fix" without a
-            # separate decision.
+            # Summary sentence: unified naming across all teacher prompts.
+            # Block order: front → front-left → front-right → back (gated),
+            # matching nuscenes_dataset.py and the student SFT prompt.
             if self.include_back_view:
                 summary_text = (
                     "Four cameras are mounted on the vehicle to perceive the surrounding environment. "
-                    "These cameras provide the front, front left, front right, and back views. "
+                    "These cameras provide the front, front-left, front-right, and back views. "
                     "The multi-view multi-frame camera images are organized in a video format. "
                 )
             else:
                 summary_text = (
                     "Three cameras are mounted on the vehicle to perceive the surrounding environment. "
-                    "These cameras provide the front, left, and right views. "
+                    "These cameras provide the front, front-left, and front-right views. "
                     "The multi-view multi-frame camera images are organized in a video format. "
                 )
 
@@ -201,7 +231,44 @@ class NuplanCoTAnnotationDataset(Dataset):
                 },
             ]
 
-            # back camera (gated)
+            user_content.extend([
+                # front-left camera (always present)
+                {
+                    "type": "text",
+                    "text": "The video is from the front-left camera, capturing history of the vehicle's front-left view from the past two seconds at 2Hz."
+                },
+                {
+                    "type": "video",
+                    "min_pixels": 400 * 400,
+                    "max_pixels": 400 * 400,
+                    "video": [
+                        "data:image/jpeg;base64," + process_image_input(front_left_camera_1),
+                        "data:image/jpeg;base64," + process_image_input(front_left_camera_2),
+                        "data:image/jpeg;base64," + process_image_input(front_left_camera_3),
+                        "data:image/jpeg;base64," + process_image_input(front_left_camera_4),
+                    ],
+                },
+
+                # front-right camera (always present)
+                {
+                    "type": "text",
+                    "text": "The video is from the front-right camera, capturing history of the vehicle's front-right view from the past two seconds at 2Hz."
+                },
+                {
+                    "type": "video",
+                    "min_pixels": 400 * 400,
+                    "max_pixels": 400 * 400,
+                    "video": [
+                        "data:image/jpeg;base64," + process_image_input(front_right_camera_1),
+                        "data:image/jpeg;base64," + process_image_input(front_right_camera_2),
+                        "data:image/jpeg;base64," + process_image_input(front_right_camera_3),
+                        "data:image/jpeg;base64," + process_image_input(front_right_camera_4),
+                    ],
+                },
+            ])
+
+            # back camera (gated; appended after front-left/front-right to
+            # match nuscenes_dataset.py ordering)
             if self.include_back_view:
                 user_content.extend([
                     {
@@ -222,40 +289,6 @@ class NuplanCoTAnnotationDataset(Dataset):
                 ])
 
             user_content.extend([
-                # left camera (always present)
-                {
-                    "type": "text",
-                    "text": "The video is from the left camera, capturing history of the vehicle's left view from the past two seconds at 2Hz."
-                },
-                {
-                    "type": "video",
-                    "min_pixels": 400 * 400,
-                    "max_pixels": 400 * 400,
-                    "video": [
-                        "data:image/jpeg;base64," + process_image_input(left_camera_1),
-                        "data:image/jpeg;base64," + process_image_input(left_camera_2),
-                        "data:image/jpeg;base64," + process_image_input(left_camera_3),
-                        "data:image/jpeg;base64," + process_image_input(left_camera_4),
-                    ],
-                },
-
-                # right camera (always present)
-                {
-                    "type": "text",
-                    "text": "The video is from the right camera, capturing history of the vehicle's right view from the past two seconds at 2Hz."
-                },
-                {
-                    "type": "video",
-                    "min_pixels": 400 * 400,
-                    "max_pixels": 400 * 400,
-                    "video": [
-                        "data:image/jpeg;base64," + process_image_input(right_camera_1),
-                        "data:image/jpeg;base64," + process_image_input(right_camera_2),
-                        "data:image/jpeg;base64," + process_image_input(right_camera_3),
-                        "data:image/jpeg;base64," + process_image_input(right_camera_4),
-                    ],
-                },
-
                 # vehicle state and instruction and additional information
                 {
                     "type": "text",
