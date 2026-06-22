@@ -66,6 +66,15 @@ def parse_args():
                         help="Number of samples to evaluate (default: all)")
     parser.add_argument("--verbose", action="store_true",
                         help="Print verbose output for each sample")
+    parser.add_argument("--per_sample_dir", type=str, default=None,
+                        help="Per-sample JSON dump dir (one file per token). "
+                             "Default: <output>.samples/ next to --output. "
+                             "Ignored when --no-save_per_sample_result is set.")
+    parser.add_argument("--save_per_sample_result",
+                        action=argparse.BooleanOptionalAction, default=True,
+                        help="Save per-sample JSON with cot_trace + trajectories "
+                             "(default: True). Pass --no-save_per_sample_result to "
+                             "skip and save only the aggregate metric table.")
     return parser.parse_args()
 
 
@@ -79,7 +88,11 @@ def main():
     is_distributed = world_size > 1
 
     if is_distributed:
-        dist.init_process_group(backend='nccl')
+        # NCCL default timeout is 10 min — too tight for nuScenes eval where
+        # per-rank shards can drift by 5-10 min due to variable per-sample
+        # generation time (long CoT samples). Bump to 1 hour.
+        import datetime as _dt
+        dist.init_process_group(backend='nccl', timeout=_dt.timedelta(hours=1))
         device = f'cuda:{local_rank}'
         torch.cuda.set_device(local_rank)
     else:
@@ -102,7 +115,25 @@ def main():
     model.autovla.vlm.resize_token_embeddings(len(processor.tokenizer))
 
     state_dict = torch.load(checkpoint_path, map_location=device)['state_dict']
-    model.autovla.load_state_dict(state_dict, strict=False)
+    # SFT ckpt saves the whole SFTAutoVLA module's state_dict, so keys are
+    # prefixed `autovla.*`. We are loading into model.autovla (an AutoVLA),
+    # which expects keys without that prefix. Strip it (matches the load
+    # logic in navsim/.../autovla_agent.py).
+    state_dict = {k.replace("autovla.", "", 1): v for k, v in state_dict.items()}
+    missing, unexpected = model.autovla.load_state_dict(state_dict, strict=False)
+    if rank == 0:
+        print(f"[nusc_eval] ckpt load: {len(missing)} missing, {len(unexpected)} unexpected")
+        if missing:
+            print(f"  first missing: {missing[:3]}")
+        if unexpected:
+            print(f"  first unexpected: {unexpected[:3]}")
+    # Hard-assert against silent base-model fallback. This was the exact bug
+    # that hid here for 4 months before being caught (Arm A nuScenes invalid
+    # results 2026-06-22). If structure ever drifts again, fail loudly.
+    assert not missing and not unexpected, (
+        f"nusc_eval ckpt load mismatch: {len(missing)} missing, "
+        f"{len(unexpected)} unexpected — ckpt prefix or AutoVLA structure drift"
+    )
 
     model.to(device)
     model.autovla.device = device  # Update the device attribute for predict()
@@ -112,6 +143,24 @@ def main():
     # its add_state(..., dist_reduce_fx="sum") declares DDP-aware accumulators,
     # so compute() will all-reduce across ranks transparently.
     planning_metrics = PlanningMetric(n_future=6).to(device)
+
+    # Per-sample dump dir for {token}.json — needed for cross-arm qualitative
+    # analysis (reasoning style comparison, failure case inspection).
+    if args.save_per_sample_result:
+        per_sample_dir = Path(args.per_sample_dir) if args.per_sample_dir \
+            else Path(args.output).with_suffix("").parent / (Path(args.output).stem + ".samples")
+        if is_main:
+            per_sample_dir.mkdir(parents=True, exist_ok=True)
+            # Sanity: confirm the dir is writable before kicking off 3h of compute
+            _probe = per_sample_dir / ".write_probe"
+            _probe.write_text("ok"); _probe.unlink()
+        if is_distributed:
+            dist.barrier()  # wait for rank 0 mkdir before any rank writes
+    else:
+        per_sample_dir = None
+        if is_main:
+            print("[nusc_eval] --no-save_per_sample_result: skipping per-sample JSON dump",
+                  flush=True)
 
     # Determine number of samples + shard across ranks (round-robin)
     sample_num = len(train_dataset.scenes)
@@ -154,9 +203,12 @@ def main():
             print(f"Predicted trajectory: {pred_trajectory}")
             print(f"Time taken: {time.time() - start_time:.3f} seconds")
        
-        # Get ground truth trajectory
-        gt_raw_trajectory = target_trajectory["gt_pos_raw"]
-        pred_xy = pred_trajectory[:, :2].to(gt_raw_trajectory.device)
+        # Get ground truth trajectory.
+        # PlanningMetric (torchmetrics) was .to(device)'d, so inputs must also
+        # live on `device` to avoid mixed-device errors during L2 / collision
+        # compute. Force GT (typically loaded CPU from cache) up to `device`.
+        gt_raw_trajectory = target_trajectory["gt_pos_raw"].to(device)
+        pred_xy = pred_trajectory[:, :2].to(device)
 
         # Load segmentation data for collision evaluation
         seg_path = Path(args.seg_data_path) / f"{scene_data['token']}.pt"
@@ -165,8 +217,8 @@ def main():
             continue
             
         uniad_data = torch.load(seg_path, map_location="cpu")
-        sdc_planning_mask = uniad_data['sdc_planning_mask'].to(gt_raw_trajectory.dtype)
-        segmentation = uniad_data['segmentation'].to(gt_raw_trajectory.dtype)
+        sdc_planning_mask = uniad_data['sdc_planning_mask'].to(device=device, dtype=gt_raw_trajectory.dtype)
+        segmentation = uniad_data['segmentation'].to(device=device, dtype=gt_raw_trajectory.dtype)
 
         # Transform GT trajectory to UniAD coordinate system
         gt_traj_uniadcoord = gt_raw_trajectory.unsqueeze(0).clone()
@@ -181,7 +233,7 @@ def main():
         pred_traj_uniadcoord = pred_traj_uniadcoord.unsqueeze(0)
 
         # Validate future mask consistency
-        cache_future_mask = torch.tensor(scene_data['future_mask'][:6])
+        cache_future_mask = torch.tensor(scene_data['future_mask'][:6], device=device)
         sdc_mask = sdc_planning_mask[0, 0, :, 0]
         if not torch.allclose(cache_future_mask, sdc_mask):
             print(f"Warning: Mismatch between mask values for sample {idx}")
@@ -189,11 +241,29 @@ def main():
 
         # Compute planning metrics
         planning_metrics(
-            pred_traj_uniadcoord[0, :, :6, :], 
-            gt_traj_uniadcoord[0, :, :6, :], 
-            sdc_planning_mask[0, :, :6, :2], 
+            pred_traj_uniadcoord[0, :, :6, :],
+            gt_traj_uniadcoord[0, :, :6, :],
+            sdc_planning_mask[0, :, :6, :2],
             segmentation[:, [1, 2, 3, 4, 5, 6]]
         )
+
+        # Persist per-sample reasoning trace + trajectories. Each rank writes
+        # its own tokens (idx is partitioned via rank_indices), so no
+        # cross-rank collision. Floats kept as Python lists for jq-ability.
+        if args.save_per_sample_result:
+            token = scene_data["token"]
+            sample_record = {
+                "token": token,
+                "rank": rank,
+                "cot_trace": output_text,
+                "pred_trajectory": pred_trajectory.detach().cpu().tolist(),
+                "gt_trajectory_raw": gt_raw_trajectory.detach().cpu().tolist(),
+                "future_mask": scene_data.get("future_mask", None),
+                "config": args.config,
+                "checkpoint": str(args.checkpoint),
+            }
+            with open(per_sample_dir / f"{token}.json", "w") as f:
+                json.dump(sample_record, f)
     
     # Calculate and print overall statistics
     # compute() triggers torchmetrics' all-reduce across ranks for any state

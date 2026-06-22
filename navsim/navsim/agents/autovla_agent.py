@@ -441,9 +441,25 @@ class AutoVLAAgent(AbstractAgent):
                 )
                 self.autovla.vlm = get_peft_model(self.autovla.vlm, lora_config)
         
-        state_dict: Dict[str, Any] = torch.load(self._checkpoint_path, 
+        state_dict: Dict[str, Any] = torch.load(self._checkpoint_path,
                                                 map_location=self.autovla.device)["state_dict"]
-        self.autovla.load_state_dict( {k.replace("autovla.", ""): v for k, v in state_dict.items()}, strict=False)
+        _stripped = {k.replace("autovla.", ""): v for k, v in state_dict.items()}
+        _missing, _unexpected = self.autovla.load_state_dict(_stripped, strict=False)
+        # SFT ckpt -> inner AutoVLA after stripping "autovla." should match
+        # perfectly. Any missing/unexpected means a structural drift between
+        # training and inference (silent weight load with strict=False is the
+        # exact bug that hid in tools/eval/nusc_eval.py for 4 months before
+        # this assert was added). LoRA path adds peft prefixes — allow soft
+        # warn rather than hard fail when LoRA is on.
+        if _missing or _unexpected:
+            print(f"[autovla_agent] ckpt load: missing={len(_missing)}, "
+                  f"unexpected={len(_unexpected)}; "
+                  f"first missing={_missing[:3]}, first unexpected={_unexpected[:3]}")
+        if not self.lora_conf.get("use_lora", False):
+            assert not _missing and not _unexpected, (
+                f"autovla_agent ckpt load: {len(_missing)} missing, "
+                f"{len(_unexpected)} unexpected — ckpt prefix or module structure drift"
+            )
 
     def name(self) -> str:
         """Inherited, see superclass."""

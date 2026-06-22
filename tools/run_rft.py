@@ -126,6 +126,21 @@ if __name__ == "__main__":
     
     # Load the state dict
     msg = model.load_state_dict(sd, strict=False)
+    # SFT ckpt only has `autovla.*` keys; GRPOAutoVLA also has `reference_model.*`
+    # keys (loaded separately in __init__ above) and possibly other state. So
+    # `reference_model.*` legitimately appears in missing — that's OK.
+    # `unexpected` SHOULD be empty (no rogue keys in SFT ckpt).
+    _unexpected_non_legit = [k for k in msg.unexpected_keys if not k.startswith("reference_model.")]
+    _missing_non_legit = [k for k in msg.missing_keys if not k.startswith("reference_model.")]
+    print(f"[run_rft] outer GRPOAutoVLA ckpt load: "
+          f"missing={len(msg.missing_keys)} ({len(_missing_non_legit)} non-ref), "
+          f"unexpected={len(msg.unexpected_keys)} ({len(_unexpected_non_legit)} non-ref)")
+    if _missing_non_legit:
+        print(f"  WARN unexpected missing non-reference keys: {_missing_non_legit[:5]}")
+    assert not _unexpected_non_legit, (
+        f"run_rft: SFT ckpt has unexpected keys outside reference_model.*: "
+        f"{_unexpected_non_legit[:5]}"
+    )
 
     # Create a LoRA configuration. Adjust the parameters (r, lora_alpha, lora_dropout) as needed.
     if config['model']['lora'].get("use", False):

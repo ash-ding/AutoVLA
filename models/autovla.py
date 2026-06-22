@@ -62,8 +62,19 @@ class GRPOAutoVLA(pl.LightningModule):
             self.reference_model = AutoVLA(config, inference=True)
             state_dict = torch.load(config['model']['sft_model_path'])["state_dict"]
             state_dict = {k.replace("autovla.", "").replace("drivevla.", ""): v for k, v in state_dict.items()}
-            self.reference_model.load_state_dict(state_dict, strict=False)
-            self.reference_model.eval()  
+            _missing, _unexpected = self.reference_model.load_state_dict(state_dict, strict=False)
+            # SFT ckpt -> reference_model should match perfectly after stripping
+            # "autovla."/"drivevla.". Any drift here is the same class of silent
+            # bug that hid in tools/eval/nusc_eval.py for months. Hard-assert.
+            if _missing or _unexpected:
+                print(f"[GRPOAutoVLA reference_model] ckpt load: "
+                      f"missing={len(_missing)}, unexpected={len(_unexpected)}; "
+                      f"first missing={_missing[:3]}, first unexpected={_unexpected[:3]}")
+            assert not _missing and not _unexpected, (
+                f"reference_model SFT ckpt load: {len(_missing)} missing, "
+                f"{len(_unexpected)} unexpected — ckpt prefix or module struct drift"
+            )
+            self.reference_model.eval()
             print(f"Using online reference model from {config['model']['sft_model_path']}")
 
         # sample generation config
